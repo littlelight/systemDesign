@@ -143,7 +143,11 @@ body.interview-mode .tab[data-tab="f"],body.interview-mode .tab[data-tab="e"],bo
 .card-flash{outline:2px solid var(--bdr-info);outline-offset:-2px}
 .card.hidden{display:none!important}
 body.system-detail .main > .fw,
-body.system-detail .sec-hdr{display:none!important}
+body.system-detail .sec-hdr,
+body.jump-detail .sec-hdr,
+body.jump-detail .grid,
+body.jump-detail .card{display:none!important}
+.jump-hidden{display:none!important}
 .chdr{padding:12px 14px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;border-bottom:.5px solid var(--bdr-ter)}
 .ctitle{font-size:14px;font-weight:500}
 .csub{font-size:11px;color:var(--txt-sec);margin-top:2px}
@@ -8308,7 +8312,7 @@ function buildEvolution(v){
 }
 function getState(){try{return JSON.parse(localStorage.getItem(LS)||'{}');}catch(e){return {};}}
 function setState(p){const s={...getState(),...p};localStorage.setItem(LS,JSON.stringify(s));}
-let af='all',as='',selectedIdx=null;
+let af='all',as='',selectedIdx=null,selectedJumpEl=null;
 function syncFilterButtons(){
   document.querySelectorAll('.sb-btn').forEach(b=>b.classList.remove('on'));
   const label=af==='all'?'All':af==='e'?'Easy':af==='m'?'Medium':'Hard';
@@ -8324,8 +8328,24 @@ function clearSearchInputs(){
 }
 function clearSystemDetail(){
   selectedIdx=null;
-  document.body.classList.remove('system-detail');
+  selectedJumpEl=null;
+  document.body.classList.remove('system-detail','jump-detail');
+  document.querySelectorAll('.jump-hidden').forEach(el=>el.classList.remove('jump-hidden'));
   document.querySelectorAll('.sb-sys').forEach(a=>a.classList.remove('active'));
+}
+function resolveJumpTarget(el){
+  if(!el) return null;
+  if(el.id==='ref-cap') return el.querySelector('.db-fw-hdr');
+  return el;
+}
+function showJumpDetail(el){
+  const target=resolveJumpTarget(el);
+  if(!target) return null;
+  clearSystemDetail();
+  selectedJumpEl=target;
+  document.body.classList.add('jump-detail');
+  apply();
+  return target;
 }
 function navTo(idx, e, tab){
   if(e) e.preventDefault();
@@ -8339,7 +8359,9 @@ function navTo(idx, e, tab){
     clearSearchInputs();
   }
   selectedIdx=idx;
+  selectedJumpEl=null;
   document.body.classList.add('system-detail');
+  document.body.classList.remove('jump-detail');
   apply();
   if(tab){
     const btn=card.querySelector('.tab[data-tab="'+tab+'"]');
@@ -8455,10 +8477,9 @@ function toggleSidebar(){
 function scrollToEl(el,e){
   if(e)e.preventDefault();
   if(!el||!el.offsetTop===undefined)return;
-  clearSystemDetail();
-  apply();
+  const target=showJumpDetail(el)||el;
   const main=document.querySelector('.main');
-  if(main) main.scrollTo({top:el.offsetTop-8,behavior:'smooth'});
+  if(main) main.scrollTo({top:target.offsetTop-8,behavior:'smooth'});
   if(window.innerWidth<=768)toggleSidebar();
 }
 function toggleTheme(){
@@ -8516,7 +8537,7 @@ function apply(){
   let ae=false,am=false,ah=false;
   document.querySelectorAll('.card').forEach(c=>{
     const matchesFilter=(af==='all'||c.dataset.diff===af)&&(!as||c.dataset.title.includes(as));
-    const show=matchesFilter&&(selectedIdx===null||parseInt(c.dataset.idx,10)===selectedIdx);
+    const show=!selectedJumpEl&&matchesFilter&&(selectedIdx===null||parseInt(c.dataset.idx,10)===selectedIdx);
     c.classList.toggle('hidden',!show);
     if(show){if(c.dataset.diff==='e')ae=true;else if(c.dataset.diff==='m')am=true;else ah=true;}
   });
@@ -8527,8 +8548,31 @@ function apply(){
     g.style.display=any?'':'none';
     s.style.display=any?'':'none';
   });
+  applyJumpDetail();
 }
 render();
+
+function applyJumpDetail(){
+  document.querySelectorAll('.jump-hidden').forEach(el=>el.classList.remove('jump-hidden'));
+  if(!selectedJumpEl) return;
+  const target=selectedJumpEl;
+  const targetSection=target.closest('.fw')||target;
+  document.querySelectorAll('.main > .fw').forEach(section=>{
+    section.classList.toggle('jump-hidden',section!==targetSection);
+  });
+  if(target.classList.contains('db-fw-hdr')){
+    targetSection.querySelectorAll('.db-fw-hdr').forEach(hdr=>{
+      const body=hdr.nextElementSibling;
+      const keep=hdr===target;
+      hdr.classList.toggle('jump-hidden',!keep);
+      if(body&&body.classList.contains('db-fw-body')) body.classList.toggle('jump-hidden',!keep);
+    });
+    const body=target.nextElementSibling;
+    const arrow=target.querySelector('.db-fw-arrow');
+    body?.classList.add('open');
+    arrow?.classList.add('open');
+  }
+}
 
 function toggleDb(hdr){
   const body=hdr.nextElementSibling;
