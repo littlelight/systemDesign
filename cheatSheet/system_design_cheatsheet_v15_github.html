@@ -17,6 +17,7 @@
   --font:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;
   --mono:"JetBrains Mono","Fira Code","Cascadia Code",Consolas,monospace;
   --r:8px;--rl:12px;
+  --content-zoom:1.5;
 }
 @media(prefers-color-scheme:dark){
   :root{
@@ -90,6 +91,10 @@ body{font-family:var(--font);color:var(--txt-pri);background:var(--bg-ter);-webk
 .fb.hard.on{background:var(--bg-dang);color:var(--txt-dang);border-color:var(--bdr-dang)}
 #srch{font-size:12px;padding:5px 10px;border-radius:6px;border:.5px solid var(--bdr-sec);background:var(--bg-sec);color:var(--txt-pri);width:min(200px,28vw);outline:none}
 #srch:focus{border-color:var(--bdr-info)}
+.font-ctl{display:flex;align-items:center;gap:6px;padding:2px 8px;border:.5px solid var(--bdr-sec);border-radius:100px;color:var(--txt-sec);white-space:nowrap}
+.font-ctl span{font-size:11px;font-weight:500}
+.font-ctl input{width:90px;accent-color:var(--bdr-info)}
+.font-ctl output{font-size:10px;color:var(--txt-ter);min-width:34px;text-align:right}
 .tb-btn{font-size:11px;font-weight:500;padding:4px 10px;border-radius:100px;border:.5px solid var(--bdr-sec);background:transparent;color:var(--txt-sec);cursor:pointer;white-space:nowrap}
 .tb-btn:hover,.tb-btn.on{background:var(--bg-info);color:var(--txt-info);border-color:var(--bdr-info)}
 .card-nav{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:6px 14px;border-bottom:.5px solid var(--bdr-ter);background:var(--bg-sec);font-size:11px}
@@ -119,6 +124,7 @@ body{font-family:var(--font);color:var(--txt-pri);background:var(--bg-ter);-webk
 body.interview-mode .tab[data-tab="f"],body.interview-mode .tab[data-tab="e"],body.interview-mode .tab[data-tab="x"],body.interview-mode .tab[data-tab="q"],body.interview-mode .tab[data-tab="v"],body.interview-mode .tab[data-tab="w"],body.interview-mode .tab[data-tab="a"]{display:none}
 .kbd-hint{font-size:10px;color:var(--txt-ter);margin-left:auto;white-space:nowrap}
 @media(max-width:900px){.kbd-hint{display:none}}
+@media(max-width:640px){.font-ctl output{display:none}.font-ctl input{width:70px}}
 @media print{
   .sidebar,.sb-toggle,.sb-overlay,.topbar,.card-nav,.copy-btn,.studied-lbl{display:none!important}
   .app-shell,.main{height:auto;overflow:visible}
@@ -129,6 +135,7 @@ body.interview-mode .tab[data-tab="f"],body.interview-mode .tab[data-tab="e"],bo
   body.interview-mode .tab{display:none!important}
   body.interview-mode .tab[data-tab="p"],body.interview-mode .tab[data-tab="k"],body.interview-mode .tab[data-tab="t"],body.interview-mode .tab[data-tab="d"],body.interview-mode .tab[data-tab="s"]{display:inline-block!important}
 }
+.main > .fw,.main > .sec-hdr,.main > .grid,footer{zoom:var(--content-zoom)}
 /* section headers */
 .sec-hdr{font-size:10px;font-weight:500;text-transform:uppercase;letter-spacing:.1em;color:var(--txt-ter);padding:20px 16px 8px;display:flex;align-items:center;gap:12px}
 .sec-hdr::after{content:'';flex:1;height:.5px;background:var(--bdr-ter)}
@@ -519,6 +526,11 @@ html:not(.js-enabled) .js-only{display:none!important}
 <div class="topbar" role="toolbar" aria-label="Main toolbar">
   <span class="brand">System Design Cheat Sheet · v15</span>
   <input id="srch" type="search" placeholder="Search systems…" aria-label="Search systems" oninput="search(this.value)">
+  <label class="font-ctl" title="Adjust content font size">
+    <span>Aa</span>
+    <input id="font-scale" type="range" min="90" max="150" step="5" value="150" aria-label="Content font size" oninput="setFontScale(this.value)">
+    <output id="font-scale-out">150%</output>
+  </label>
   <button class="tb-btn" id="interview-btn" onclick="toggleInterviewMode()" aria-pressed="false" title="Show 5 essential tabs only">Interview mode</button>
   <span class="kbd-hint" aria-hidden="true">/ search · j/k nav · 1–5 tabs · Esc</span>
 </div>
@@ -8312,6 +8324,15 @@ function buildEvolution(v){
 }
 function getState(){try{return JSON.parse(localStorage.getItem(LS)||'{}');}catch(e){return {};}}
 function setState(p){const s={...getState(),...p};localStorage.setItem(LS,JSON.stringify(s));}
+function setFontScale(v){
+  const pct=Math.max(90,Math.min(150,parseInt(v,10)||150));
+  document.documentElement.style.setProperty('--content-zoom',String(pct/100));
+  const slider=document.getElementById('font-scale');
+  const out=document.getElementById('font-scale-out');
+  if(slider&&slider.value!==String(pct)) slider.value=String(pct);
+  if(out) out.textContent=pct+'%';
+  setState({fontScale:pct});
+}
 let af='all',as='',selectedIdx=null,selectedJumpEl=null;
 function syncFilterButtons(){
   document.querySelectorAll('.sb-btn').forEach(b=>b.classList.remove('on'));
@@ -8600,6 +8621,7 @@ function initApp(){
     const btn=document.getElementById('theme-btn');
     if(btn) btn.textContent='☀️ Light mode';
   }
+  if(s.fontScale) setFontScale(s.fontScale);
   if(s.interview) toggleInterviewMode();
   if(s.studied){
     Object.entries(s.studied).forEach(([idx,on])=>{
