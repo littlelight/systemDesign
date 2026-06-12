@@ -6,6 +6,22 @@ Full cheatsheet: [system_design_cheatsheet_v14.html](system_design_cheatsheet_v1
 
 
 
+
+## Staff answer ladder
+
+Interviewers score you by depth. For every pattern, practice three rungs:
+
+| Rung | What to say | What it signals |
+|------|-------------|-----------------|
+| 🔴 **Weak** | Name a tool, skip trade-offs | Junior — pattern recall only |
+| 🟡 **Strong** | Pattern + why it fits this workload | Mid — credible design |
+| 🟢 **Staff+** | Failure mode + metric + when you'd revisit | Staff — operated production |
+
+Each pattern below includes all three. **Default answer in interview:** Strong in 30s → offer Staff+ if they probe.
+
+
+
+
 ## Severity legend
 
 | Badge | Level | When interviewers probe here |
@@ -566,719 +582,823 @@ flowchart TD
 ### 🔴 Thundering herd
 
 > [!CAUTION]
-> **Staff-level answer:** Many clients miss cache (or TTL expires) at the same instant and all hit the origin/DB together. Fix with **request coalescing / single-flight** (one goroutine repopulates; others wait on the same future), **staggered TTL jitter** (±10–20% on expiry), **probabilistic early refresh** (background recompute before hard expiry), and **cache warming** after deploys. Add a **local in-process LRU** on app servers so the hottest keys never trigger a network miss storm.
+> **🔴 Weak** — Add caching — TTL expires, everyone hits the DB.
 >
-> **Trade-offs:** Single-flight adds tail latency for waiters on cold miss. Jitter makes freshness less predictable per key. Local cache introduces per-node staleness — fine for redirects, wrong for inventory counts.
+> [!WARNING]
+> **🟡 Strong** — Many clients miss cache (or TTL expires) at the same instant and all hit the origin/DB together. Fix with **request coalescing / single-flight** (one goroutine repopulates; others wait on the same future), **staggered TTL jitter** (±10–20% on expiry), **probabilistic early refresh** (background recompute before hard expiry), and **cache warming** after deploys. Add a **local in-process LRU** on app servers so the hottest keys never trigger a network miss storm.
 >
-> **Example:** *Redis restart during peak → 100% miss → Postgres connection pool exhausted in seconds. Netflix-style: mutex per key + early async refresh.*
+> [!TIP]
+> **🟢 Staff+** — Single-flight adds tail latency for waiters on cold miss. Jitter makes freshness less predictable per key. Local cache introduces per-node staleness — fine for redirects, wrong for inventory counts. Example: Redis restart during peak → 100% miss → Postgres connection pool exhausted in seconds. Netflix-style: mutex per key + early async refresh. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Single-flight adds tail latency for waiters on cold miss. Jitter makes freshness less predictable per key. Local cache introduces per-node staleness — fine for redirects, wrong for inventory counts.
+
+**Example:** *Redis restart during peak → 100% miss → Postgres connection pool exhausted in seconds. Netflix-style: mutex per key + early async refresh.*
 
 📊 **Visual:** [Thundering herd](interview-quick-fire-diagrams.html#thundering-herd)
-
-
----
 
 ### 🔴 Cache stampede (dogpile)
 
 > [!CAUTION]
-> **Staff-level answer:** Same family as thundering herd but specifically on **expensive recompute** (heavy DB query, ML ranker). Beyond single-flight: **lock with short lease**, **precompute in background** before TTL fires, **two-tier TTL** (soft expire → serve stale while one worker refreshes). For viral keys, **bypass cache logic entirely** — route to a dedicated read path or materialized view.
+> **🔴 Weak** — Cache the expensive query with a fixed TTL.
 >
-> **Trade-offs:** Serving stale during refresh trades UX accuracy for availability — must define max staleness SLA. Background refresh burns CPU on keys nobody reads (wasted work without hit-rate signal).
+> [!WARNING]
+> **🟡 Strong** — Same family as thundering herd but specifically on **expensive recompute** (heavy DB query, ML ranker). Beyond single-flight: **lock with short lease**, **precompute in background** before TTL fires, **two-tier TTL** (soft expire → serve stale while one worker refreshes). For viral keys, **bypass cache logic entirely** — route to a dedicated read path or materialized view.
 >
-> **Example:** *Feed ranker takes 200ms; 10K concurrent misses = 2K parallel rank jobs. Fix: one refresh job per `(user, feed)` key; readers get previous snapshot.*
+> [!TIP]
+> **🟢 Staff+** — Serving stale during refresh trades UX accuracy for availability — must define max staleness SLA. Background refresh burns CPU on keys nobody reads (wasted work without hit-rate signal). Example: Feed ranker takes 200ms; 10K concurrent misses = 2K parallel rank jobs. Fix: one refresh job per `(user, feed)` key; readers get previous snapshot. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Serving stale during refresh trades UX accuracy for availability — must define max staleness SLA. Background refresh burns CPU on keys nobody reads (wasted work without hit-rate signal).
+
+**Example:** *Feed ranker takes 200ms; 10K concurrent misses = 2K parallel rank jobs. Fix: one refresh job per `(user, feed)` key; readers get previous snapshot.*
 
 📊 **Visual:** [Thundering herd](interview-quick-fire-diagrams.html#thundering-herd) *(add serve-stale branch)*
-
-
----
 
 ### 🔴 Retry storm
 
 > [!CAUTION]
-> **Staff-level answer:** Clients or middleware retry aggressively on timeout, **multiplying load on a already-degraded service**. Use **exponential backoff with jitter**, **retry budgets** (max N per request chain), **circuit breakers** that fail fast, and **429 + Retry-After** from the server. Idempotency keys on mutating retries so duplicates are safe.
+> **🔴 Weak** — Retry on any timeout — clients will eventually succeed.
 >
-> **Trade-offs:** Fewer retries increase user-visible errors during brief blips. Circuit open = hard failures — need half-open probes and alerting. Aggressive backoff slows recovery perception for humans.
+> [!WARNING]
+> **🟡 Strong** — Clients or middleware retry aggressively on timeout, **multiplying load on a already-degraded service**. Use **exponential backoff with jitter**, **retry budgets** (max N per request chain), **circuit breakers** that fail fast, and **429 + Retry-After** from the server. Idempotency keys on mutating retries so duplicates are safe.
 >
-> **Example:** *Payment API at 80% CPU; clients retry 3× → effective load 240%. Breaker opens; queue for async reconciliation instead.*
+> [!TIP]
+> **🟢 Staff+** — Fewer retries increase user-visible errors during brief blips. Circuit open = hard failures — need half-open probes and alerting. Aggressive backoff slows recovery perception for humans. Example: Payment API at 80% CPU; clients retry 3× → effective load 240%. Breaker opens; queue for async reconciliation instead. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Fewer retries increase user-visible errors during brief blips. Circuit open = hard failures — need half-open probes and alerting. Aggressive backoff slows recovery perception for humans.
+
+**Example:** *Payment API at 80% CPU; clients retry 3× → effective load 240%. Breaker opens; queue for async reconciliation instead.*
 
 📊 **Visual:** [Retry storm](interview-quick-fire-diagrams.html#retry-storm)
-
-
----
 
 ### 🔴 Metastable failure
 
 > [!CAUTION]
-> **Staff-level answer:** System has **two stable states** (healthy vs overloaded) and overload persists even after trigger is gone — retries, autoscale lag, GC piles, connection churn keep it stuck. Fix: **load shedding** early (drop low-priority work), **admission control** at edge, **enforce timeouts** everywhere, **disable retries** on read path under stress. Recovery often needs **manual traffic throttle**, not just "wait for autoscale."
+> **🔴 Weak** — Wait for autoscale; retries will fix it.
 >
-> **Trade-offs:** Shedding load means deliberately failing some users to save the rest — product/policy decision. Turning off retries hurts success rate metrics during incidents (the right trade).
+> [!WARNING]
+> **🟡 Strong** — System has **two stable states** (healthy vs overloaded) and overload persists even after trigger is gone — retries, autoscale lag, GC piles, connection churn keep it stuck. Fix: **load shedding** early (drop low-priority work), **admission control** at edge, **enforce timeouts** everywhere, **disable retries** on read path under stress. Recovery often needs **manual traffic throttle**, not just "wait for autoscale."
 >
-> **Example:** *AWS ALB + Lambda cold starts + retry loops → hours of elevated errors after a 2-minute DB blip.*
+> [!TIP]
+> **🟢 Staff+** — Shedding load means deliberately failing some users to save the rest — product/policy decision. Turning off retries hurts success rate metrics during incidents (the right trade). Example: AWS ALB + Lambda cold starts + retry loops → hours of elevated errors after a 2-minute DB blip. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Shedding load means deliberately failing some users to save the rest — product/policy decision. Turning off retries hurts success rate metrics during incidents (the right trade).
+
+**Example:** *AWS ALB + Lambda cold starts + retry loops → hours of elevated errors after a 2-minute DB blip.*
 
 📊 **Visual:** [Retry storm](interview-quick-fire-diagrams.html#retry-storm) *(stuck in overload loop)*
-
-
----
 
 ### 🔴 Hot partition / hot key
 
 > [!CAUTION]
-> **Staff-level answer:** One shard or Redis key gets disproportionate traffic (celebrity tweet, viral URL, global counter). **Detect** via per-key QPS metrics. **Mitigate:** sub-key sharding (logical fan-out), **local cache** on app tier, **read replicas** dedicated to hot range, **async aggregation** (writes to buffer, periodic flush). For counters: **segmented counters** (shard add locally, sum on read).
+> **🔴 Weak** — Scale Redis vertically when one key gets hot.
 >
-> **Trade-offs:** Segmented counters make real-time exact counts harder. Local cache breaks global consistency. Splitting one hot key across shards complicates read path.
+> [!WARNING]
+> **🟡 Strong** — One shard or Redis key gets disproportionate traffic (celebrity tweet, viral URL, global counter). **Detect** via per-key QPS metrics. **Mitigate:** sub-key sharding (logical fan-out), **local cache** on app tier, **read replicas** dedicated to hot range, **async aggregation** (writes to buffer, periodic flush). For counters: **segmented counters** (shard add locally, sum on read).
 >
-> **Example:** *Justin Bieber tweet fan-out — Twitter switched to pull model for >10M follower accounts.*
+> [!TIP]
+> **🟢 Staff+** — Segmented counters make real-time exact counts harder. Local cache breaks global consistency. Splitting one hot key across shards complicates read path. Example: Justin Bieber tweet fan-out — Twitter switched to pull model for >10M follower accounts. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Segmented counters make real-time exact counts harder. Local cache breaks global consistency. Splitting one hot key across shards complicates read path.
+
+**Example:** *Justin Bieber tweet fan-out — Twitter switched to pull model for >10M follower accounts.*
 
 📊 **Visual:** [Hot key](interview-quick-fire-diagrams.html#hot-key) · [Fan-out hybrid](interview-quick-fire-diagrams.html#fan-out)
-
-
----
 
 ### 🔴 Split brain
 
 > [!CAUTION]
-> **Staff-level answer:** Network partition causes **two nodes to believe they're primary** — risk of divergent writes. Prefer **quorum writes** (Raft/Paxos), **fencing tokens** (monotonic epoch; stale primary can't commit), **STONITH** in infra layers. For caches/locks: **Redlock is controversial** — say you'd use a consensus-backed lock or DB lease with TTL.
+> **🔴 Weak** — Promote replica on primary failure — keep serving writes.
 >
-> **Trade-offs:** Quorum adds latency and needs odd number of AZs. Fencing requires plumbing through all storage layers. Availability during partition: CP systems reject writes (unavailable), AP systems risk inconsistency.
+> [!WARNING]
+> **🟡 Strong** — Network partition causes **two nodes to believe they're primary** — risk of divergent writes. Prefer **quorum writes** (Raft/Paxos), **fencing tokens** (monotonic epoch; stale primary can't commit), **STONITH** in infra layers. For caches/locks: **Redlock is controversial** — say you'd use a consensus-backed lock or DB lease with TTL.
 >
-> **Example:** *Redis primary + async replica both promoted after partition → duplicate short codes. Fix: etcd lease + single writer.*
+> [!TIP]
+> **🟢 Staff+** — Quorum adds latency and needs odd number of AZs. Fencing requires plumbing through all storage layers. Availability during partition: CP systems reject writes (unavailable), AP systems risk inconsistency. Example: Redis primary + async replica both promoted after partition → duplicate short codes. Fix: etcd lease + single writer. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Quorum adds latency and needs odd number of AZs. Fencing requires plumbing through all storage layers. Availability during partition: CP systems reject writes (unavailable), AP systems risk inconsistency.
+
+**Example:** *Redis primary + async replica both promoted after partition → duplicate short codes. Fix: etcd lease + single writer.*
 
 📊 **Visual:** [Split brain](interview-quick-fire-diagrams.html#split-brain)
-
-
----
 
 ### 🔴 Poison message
 
 > [!CAUTION]
-> **Staff-level answer:** One bad message crashes consumer in a loop (malformed payload, unexpected schema). **DLQ** after N attempts, **schema validation** at ingest, **poison pill quarantine** with alert. Replay DLQ only after fix deployed. Separate **canary consumer** on new schema versions.
+> **🔴 Weak** — Restart the consumer until the message processes.
 >
-> **Trade-offs:** DLQ delays processing for bad messages (operational toil). Strict validation rejects valid edge cases if schema too tight.
+> [!WARNING]
+> **🟡 Strong** — One bad message crashes consumer in a loop (malformed payload, unexpected schema). **DLQ** after N attempts, **schema validation** at ingest, **poison pill quarantine** with alert. Replay DLQ only after fix deployed. Separate **canary consumer** on new schema versions.
 >
-> **Example:** *Kafka consumer OOM on 12MB JSON → partition stuck. Move to DLQ; fix deserializer; replay with size cap.*
+> [!TIP]
+> **🟢 Staff+** — DLQ delays processing for bad messages (operational toil). Strict validation rejects valid edge cases if schema too tight. Example: Kafka consumer OOM on 12MB JSON → partition stuck. Move to DLQ; fix deserializer; replay with size cap. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** DLQ delays processing for bad messages (operational toil). Strict validation rejects valid edge cases if schema too tight.
+
+**Example:** *Kafka consumer OOM on 12MB JSON → partition stuck. Move to DLQ; fix deserializer; replay with size cap.*
 
 📊 **Visual:** [Poison message](interview-quick-fire-diagrams.html#poison-message)
-
-
----
 
 ### 🔴 Head-of-line blocking
 
 > [!CAUTION]
-> **Staff-level answer:** One slow item blocks entire queue (FIFO worker stuck on huge job). Use **multiple queues by SLA**, **priority queues**, **separate thread pools per task type**, **bounded work stealing**. For HTTP: don't share one pool between fast reads and slow reports.
+> **🔴 Weak** — One worker pool for all job types.
 >
-> **Trade-offs:** More queues = more ops complexity and potential starvation of low-priority work. Priority inversion if not careful with shared resources.
+> [!WARNING]
+> **🟡 Strong** — One slow item blocks entire queue (FIFO worker stuck on huge job). Use **multiple queues by SLA**, **priority queues**, **separate thread pools per task type**, **bounded work stealing**. For HTTP: don't share one pool between fast reads and slow reports.
 >
-> **Example:** *Video transcode 40 min blocks thumbnail job. Dedicated `fast` and `slow` Kafka topics.*
+> [!TIP]
+> **🟢 Staff+** — More queues = more ops complexity and potential starvation of low-priority work. Priority inversion if not careful with shared resources. Example: Video transcode 40 min blocks thumbnail job. Dedicated `fast` and `slow` Kafka topics. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** More queues = more ops complexity and potential starvation of low-priority work. Priority inversion if not careful with shared resources.
+
+**Example:** *Video transcode 40 min blocks thumbnail job. Dedicated `fast` and `slow` Kafka topics.*
 
 📊 **Visual:** [Poison message](interview-quick-fire-diagrams.html#poison-message) *(split fast/slow queues)*
-
-
----
 
 ### 🔴 N+1 queries
 
 > [!CAUTION]
-> **Staff-level answer:** Loop loads parent rows then one query per child — collapses at scale. Fix with **JOIN + batch load**, **DataLoader pattern** (batch IDs per request), **denormalized read model** for hot paths. In microservices: **graphQL batch endpoint** or materialized view — not 50 sequential RPCs.
+> **🔴 Weak** — Load related rows in a loop — simple and correct.
 >
-> **Trade-offs:** JOINs couple schemas; denormalization adds sync lag. Batching adds latency within single request (wait for batch window).
+> [!WARNING]
+> **🟡 Strong** — Loop loads parent rows then one query per child — collapses at scale. Fix with **JOIN + batch load**, **DataLoader pattern** (batch IDs per request), **denormalized read model** for hot paths. In microservices: **graphQL batch endpoint** or materialized view — not 50 sequential RPCs.
 >
-> **Example:** *Feed loads 500 authors each with a profile query → 501 DB roundtrips. Batch `WHERE id IN (...)`.*
+> [!TIP]
+> **🟢 Staff+** — JOINs couple schemas; denormalization adds sync lag. Batching adds latency within single request (wait for batch window). Example: Feed loads 500 authors each with a profile query → 501 DB roundtrips. Batch `WHERE id IN (...)`. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** JOINs couple schemas; denormalization adds sync lag. Batching adds latency within single request (wait for batch window).
+
+**Example:** *Feed loads 500 authors each with a profile query → 501 DB roundtrips. Batch `WHERE id IN (...)`.*
 
 📊 **Visual:** [N+1 vs batch](interview-quick-fire-diagrams.html#n1-batch)
-
-
----
 
 ### 🔴 Connection pool exhaustion
 
 > [!CAUTION]
-> **Staff-level answer:** App holds DB connections too long (slow queries, missing `finally close`, transaction scope too wide). **Right-size pool** (often tens, not thousands per instance), **query timeouts**, **pgbouncer/RDS proxy** for multiplexing, **reject** when pool saturated instead of queuing forever. Monitor **waiting thread count**.
+> **🔴 Weak** — Increase max connections on the database.
 >
-> **Trade-offs:** Small pools limit per-instance throughput — scale horizontally instead. Proxy adds hop latency and single point of failure if not HA.
+> [!WARNING]
+> **🟡 Strong** — App holds DB connections too long (slow queries, missing `finally close`, transaction scope too wide). **Right-size pool** (often tens, not thousands per instance), **query timeouts**, **pgbouncer/RDS proxy** for multiplexing, **reject** when pool saturated instead of queuing forever. Monitor **waiting thread count**.
 >
-> **Example:** *Deploy leak leaves connections open → new requests hang 30s. Alert on `pool.waiting > 0`.*
+> [!TIP]
+> **🟢 Staff+** — Small pools limit per-instance throughput — scale horizontally instead. Proxy adds hop latency and single point of failure if not HA. Example: Deploy leak leaves connections open → new requests hang 30s. Alert on `pool.waiting > 0`. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Small pools limit per-instance throughput — scale horizontally instead. Proxy adds hop latency and single point of failure if not HA.
+
+**Example:** *Deploy leak leaves connections open → new requests hang 30s. Alert on `pool.waiting > 0`.*
 
 📊 **Visual:** [Connection pool](interview-quick-fire-diagrams.html#connection-pool)
-
-
----
 
 ### 🔴 Replica lag / stale read
 
 > [!CAUTION]
-> **Staff-level answer:** Read replica serves data seconds behind primary — user sees own write missing. **Route read-your-writes to primary** (or sticky session), **monitor replication lag** and drop replica from pool if > threshold, **version tokens** in API so client knows staleness.
+> **🔴 Weak** — Add read replicas and route all reads there.
 >
-> **Trade-offs:** Primary reads reduce scale benefit of replicas. Lag threshold tuning is workload-specific (feeds OK, banking not).
+> [!WARNING]
+> **🟡 Strong** — Read replica serves data seconds behind primary — user sees own write missing. **Route read-your-writes to primary** (or sticky session), **monitor replication lag** and drop replica from pool if > threshold, **version tokens** in API so client knows staleness.
 >
-> **Example:** *User posts comment, refresh shows nothing — read hit 30s-lagged replica. Session stickiness to primary for 5s after write.*
+> [!TIP]
+> **🟢 Staff+** — Primary reads reduce scale benefit of replicas. Lag threshold tuning is workload-specific (feeds OK, banking not). Example: User posts comment, refresh shows nothing — read hit 30s-lagged replica. Session stickiness to primary for 5s after write. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Primary reads reduce scale benefit of replicas. Lag threshold tuning is workload-specific (feeds OK, banking not).
+
+**Example:** *User posts comment, refresh shows nothing — read hit 30s-lagged replica. Session stickiness to primary for 5s after write.*
 
 📊 **Visual:** [Replica lag](interview-quick-fire-diagrams.html#replica-lag)
-
-
----
 
 ### 🔴 Slow node (straggler)
 
 > [!CAUTION]
-> **Staff-level answer:** One shard/node at 99th percentile kills scatter-gather (MapReduce, multi-shard query). **Speculative duplicate requests** (hedged reads), **timeout per shard** and return partial results, **rebalance** hot nodes, **avoid co-tenancy** of heavy tenants.
+> **🔴 Weak** — Wait for the slowest shard — correctness first.
 >
-> **Trade-offs:** Hedged reads double load on recovery path. Partial results complicate API contract.
+> [!WARNING]
+> **🟡 Strong** — One shard/node at 99th percentile kills scatter-gather (MapReduce, multi-shard query). **Speculative duplicate requests** (hedged reads), **timeout per shard** and return partial results, **rebalance** hot nodes, **avoid co-tenancy** of heavy tenants.
 >
-> **Example:** *ES query across 20 shards; one shard on noisy neighbor → p99 3s. Cancel straggler at 500ms; return 19/20.*
+> [!TIP]
+> **🟢 Staff+** — Hedged reads double load on recovery path. Partial results complicate API contract. Example: ES query across 20 shards; one shard on noisy neighbor → p99 3s. Cancel straggler at 500ms; return 19/20. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Hedged reads double load on recovery path. Partial results complicate API contract.
+
+**Example:** *ES query across 20 shards; one shard on noisy neighbor → p99 3s. Cancel straggler at 500ms; return 19/20.*
 
 📊 **Visual:** [Scatter-gather straggler](interview-quick-fire-diagrams.html#straggler)
-
-
----
 
 ### 🔴 Dual-write problem
 
 > [!CAUTION]
-> **Staff-level answer:** Writing to DB and cache (or ES) in application code without atomicity — crash between writes causes permanent drift. Prefer **CDC / transactional outbox** → async projector updates derived store. Cache: **cache-aside** with DB as source of truth, not write-through from app dual paths.
+> **🔴 Weak** — Write to DB and cache in the same request handler.
 >
-> **Trade-offs:** CDC adds lag to search index. Outbox requires consumer ops. Cache-aside has miss path complexity.
+> [!WARNING]
+> **🟡 Strong** — Writing to DB and cache (or ES) in application code without atomicity — crash between writes causes permanent drift. Prefer **CDC / transactional outbox** → async projector updates derived store. Cache: **cache-aside** with DB as source of truth, not write-through from app dual paths.
 >
-> **Example:** *Write PG succeeds, ES write fails — search missing new row until nightly rebuild. Outbox + indexer.*
+> [!TIP]
+> **🟢 Staff+** — CDC adds lag to search index. Outbox requires consumer ops. Cache-aside has miss path complexity. Example: Write PG succeeds, ES write fails — search missing new row until nightly rebuild. Outbox + indexer. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** CDC adds lag to search index. Outbox requires consumer ops. Cache-aside has miss path complexity.
+
+**Example:** *Write PG succeeds, ES write fails — search missing new row until nightly rebuild. Outbox + indexer.*
 
 📊 **Visual:** [Dual-write vs outbox](interview-quick-fire-diagrams.html#dual-write)
-
-
----
 
 ### 🔴 Circular dependency / retry loop
 
 > [!CAUTION]
-> **Staff-level answer:** Service A calls B calls A, or retry policies form a loop under failure. **Timeouts + max depth headers**, **acyclic dependency rules** in architecture review, **async handoff** at boundaries. Break sync cycles with queue.
+> **🔴 Weak** — Service A calls B calls A with retries enabled.
 >
-> **Trade-offs:** Async adds UX latency for completion. Strict layering can feel bureaucratic but prevents outage amplification.
+> [!WARNING]
+> **🟡 Strong** — Service A calls B calls A, or retry policies form a loop under failure. **Timeouts + max depth headers**, **acyclic dependency rules** in architecture review, **async handoff** at boundaries. Break sync cycles with queue.
 >
-> **Example:** *Auth service calls User service calls Auth for permission — deadlock under load. Extract permissions cache.*
+> [!TIP]
+> **🟢 Staff+** — Async adds UX latency for completion. Strict layering can feel bureaucratic but prevents outage amplification. Example: Auth service calls User service calls Auth for permission — deadlock under load. Extract permissions cache. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Async adds UX latency for completion. Strict layering can feel bureaucratic but prevents outage amplification.
+
+**Example:** *Auth service calls User service calls Auth for permission — deadlock under load. Extract permissions cache.*
 
 📊 **Visual:** [Retry storm](interview-quick-fire-diagrams.html#retry-storm) *(draw A→B→A cycle; break with queue)*
 
-
----
-
-## Reads & caching
-
-> [!TIP]
-> **🟢 Pattern** — Core design pattern — pattern + trade-off + anchor
-
-
 ### 🟢 Reduce DB read load
 
+> [!CAUTION]
+> **🔴 Weak** — Put Redis in front of the database.
+>
+> [!WARNING]
+> **🟡 Strong** — **Read replicas** for fan-out; **Redis cache-aside** for hot keys (app reads cache → on miss read DB → populate). Target **>90% hit rate** on read-heavy paths. **Invalidate or TTL** on write; never treat cache as source of truth.
+>
 > [!TIP]
-> **Staff-level answer:** **Read replicas** for fan-out; **Redis cache-aside** for hot keys (app reads cache → on miss read DB → populate). Target **>90% hit rate** on read-heavy paths. **Invalidate or TTL** on write; never treat cache as source of truth.
->
-> **Trade-offs:** Replica lag → stale reads unless you route critical reads to primary. Cache invalidation bugs cause subtle data bugs. Memory cost scales with working set.
->
-> **Example:** *Netflix ~95% API traffic served from EVCache/Memcached layer.*
+> **🟢 Staff+** — Replica lag → stale reads unless you route critical reads to primary. Cache invalidation bugs cause subtle data bugs. Memory cost scales with working set. Example: Netflix ~95% API traffic served from EVCache/Memcached layer. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Replica lag → stale reads unless you route critical reads to primary. Cache invalidation bugs cause subtle data bugs. Memory cost scales with working set.
+
+**Example:** *Netflix ~95% API traffic served from EVCache/Memcached layer.*
 
 📊 **Visual:** [Cache-aside](interview-quick-fire-diagrams.html#cache-aside)
 
-
----
-
 ### 🟢 Hot key / viral content
 
+> [!CAUTION]
+> **🔴 Weak** — Bigger Redis instance when a celebrity posts.
+>
+> [!WARNING]
+> **🟡 Strong** — Three layers: **local LRU** (microseconds, per process) → **Redis cluster** (milliseconds) → **DB/CDN**. Instrument per-key QPS; alert at 1K RPS/key. For global counters use **sharded counters** or **HyperLogLog** if approximate OK.
+>
 > [!TIP]
-> **Staff-level answer:** Three layers: **local LRU** (microseconds, per process) → **Redis cluster** (milliseconds) → **DB/CDN**. Instrument per-key QPS; alert at 1K RPS/key. For global counters use **sharded counters** or **HyperLogLog** if approximate OK.
->
-> **Trade-offs:** Local cache = inconsistent across fleet. Sharded counters lose O(1) global exact count. CDN caching of dynamic data needs short TTL + purge playbook.
->
-> **Example:** *Viral Bitly link — single Redis key melts. Local LRU + CDN 302 caching for top-N URLs.*
+> **🟢 Staff+** — Local cache = inconsistent across fleet. Sharded counters lose O(1) global exact count. CDN caching of dynamic data needs short TTL + purge playbook. Example: Viral Bitly link — single Redis key melts. Local LRU + CDN 302 caching for top-N URLs. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Local cache = inconsistent across fleet. Sharded counters lose O(1) global exact count. CDN caching of dynamic data needs short TTL + purge playbook.
+
+**Example:** *Viral Bitly link — single Redis key melts. Local LRU + CDN 302 caching for top-N URLs.*
 
 📊 **Visual:** [Hot key](interview-quick-fire-diagrams.html#hot-key)
 
-
----
-
 ### 🟢 Stale cache after update
 
+> [!CAUTION]
+> **🔴 Weak** — Delete cache key on every write — always consistent.
+>
+> [!WARNING]
+> **🟡 Strong** — **Write-invalidate** (delete cache key on mutation) or **write-through** for low-cardinality entities. TTL as safety net only. For feeds, expose **version / `updated_at`** so UI can reconcile.
+>
 > [!TIP]
-> **Staff-level answer:** **Write-invalidate** (delete cache key on mutation) or **write-through** for low-cardinality entities. TTL as safety net only. For feeds, expose **version / `updated_at`** so UI can reconcile.
->
-> **Trade-offs:** Invalidate on every write reduces hit rate for churny keys. Write-through adds write latency. Versioned UI adds client complexity.
->
-> **Example:** *Profile name change — `DEL user:123` in Redis on PG commit.*
+> **🟢 Staff+** — Invalidate on every write reduces hit rate for churny keys. Write-through adds write latency. Versioned UI adds client complexity. Example: Profile name change — `DEL user:123` in Redis on PG commit. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Invalidate on every write reduces hit rate for churny keys. Write-through adds write latency. Versioned UI adds client complexity.
 
----
+**Example:** *Profile name change — `DEL user:123` in Redis on PG commit.*
 
 ### 🟢 Reduce global read latency
 
+> [!CAUTION]
+> **🔴 Weak** — Deploy one big CDN in the US — covers everyone.
+>
+> [!WARNING]
+> **🟡 Strong** — **CDN** for static and cacheable API responses. **GeoDNS / latency-based routing** to nearest region. **Read replicas per region** with async replication; accept staleness or conflict rules for multi-master.
+>
 > [!TIP]
-> **Staff-level answer:** **CDN** for static and cacheable API responses. **GeoDNS / latency-based routing** to nearest region. **Read replicas per region** with async replication; accept staleness or conflict rules for multi-master.
->
-> **Trade-offs:** Multi-region consistency is hard (CAP). CDN cache invalidation is slow and costs money. Data residency laws may forbid cross-border copies.
->
-> **Example:** *Cloudflare 300+ PoPs; HLS video segments `max-age=86400`.*
+> **🟢 Staff+** — Multi-region consistency is hard (CAP). CDN cache invalidation is slow and costs money. Data residency laws may forbid cross-border copies. Example: Cloudflare 300+ PoPs; HLS video segments `max-age=86400`. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Multi-region consistency is hard (CAP). CDN cache invalidation is slow and costs money. Data residency laws may forbid cross-border copies.
 
----
+**Example:** *Cloudflare 300+ PoPs; HLS video segments `max-age=86400`.*
 
 ### 🟢 Pagination at scale
 
+> [!CAUTION]
+> **🔴 Weak** — OFFSET/LIMIT — page 10,000 is fine if indexed.
+>
+> [!WARNING]
+> **🟡 Strong** — **Keyset / cursor** pagination (`WHERE (ts, id) < cursor ORDER BY ts DESC LIMIT 20`). Never `OFFSET` on large tables — O(n) scans. Cursor is opaque blob encoding last seen tuple.
+>
 > [!TIP]
-> **Staff-level answer:** **Keyset / cursor** pagination (`WHERE (ts, id) < cursor ORDER BY ts DESC LIMIT 20`). Never `OFFSET` on large tables — O(n) scans. Cursor is opaque blob encoding last seen tuple.
->
-> **Trade-offs:** No "jump to page 47" without walking cursors. Stable sort key required; composite index design matters.
->
-> **Example:** *Twitter timelines — snowflake ID as cursor, not page numbers.*
+> **🟢 Staff+** — No "jump to page 47" without walking cursors. Stable sort key required; composite index design matters. Example: Twitter timelines — snowflake ID as cursor, not page numbers. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** No "jump to page 47" without walking cursors. Stable sort key required; composite index design matters.
 
----
+**Example:** *Twitter timelines — snowflake ID as cursor, not page numbers.*
 
 ### 🟢 Search across billions of records
 
+> [!CAUTION]
+> **🔴 Weak** — SELECT * WHERE title LIKE '%query%'.
+>
+> [!WARNING]
+> **🟡 Strong** — **Elasticsearch** (or similar) as **derived index**. Ingest via CDC (Debezium) or dual-write outbox. Primary DB remains source of truth; ES rebuilt from snapshot + CDC if lost.
+>
 > [!TIP]
-> **Staff-level answer:** **Elasticsearch** (or similar) as **derived index**. Ingest via CDC (Debezium) or dual-write outbox. Primary DB remains source of truth; ES rebuilt from snapshot + CDC if lost.
->
-> **Trade-offs:** Index lag (seconds). Denormalized docs drift from normalized DB. Cluster ops and mapping migrations are non-trivial.
->
-> **Example:** *Shopify product search — PG → Kafka → ES; rebuild index from PG snapshot overnight.*
+> **🟢 Staff+** — Index lag (seconds). Denormalized docs drift from normalized DB. Cluster ops and mapping migrations are non-trivial. Example: Shopify product search — PG → Kafka → ES; rebuild index from PG snapshot overnight. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Index lag (seconds). Denormalized docs drift from normalized DB. Cluster ops and mapping migrations are non-trivial.
+
+**Example:** *Shopify product search — PG → Kafka → ES; rebuild index from PG snapshot overnight.*
 
 📊 **Visual:** [Dual-write vs outbox](interview-quick-fire-diagrams.html#dual-write)
-
-
----
 
 ### 🟢 Autocomplete / typeahead
 
+> [!CAUTION]
+> **🔴 Weak** — Prefix scan on the users table on every keystroke.
+>
+> [!WARNING]
+> **🟡 Strong** — Offline **MapReduce** on query logs → **prefix → top-K** in Redis. Online path: debounce 100ms, `HGET prefix`, CDN for top 10K prefixes. Fuzzy match optional second tier (ES).
+>
 > [!TIP]
-> **Staff-level answer:** Offline **MapReduce** on query logs → **prefix → top-K** in Redis. Online path: debounce 100ms, `HGET prefix`, CDN for top 10K prefixes. Fuzzy match optional second tier (ES).
->
-> **Trade-offs:** Weekly rebuild = stale trending queries. Top-K only — no full corpus scan at keystroke. Privacy: aggregate logs, don't store raw PII queries.
->
-> **Example:** *Google Suggest — precomputed trie shards + aggressive CDN.*
+> **🟢 Staff+** — Weekly rebuild = stale trending queries. Top-K only — no full corpus scan at keystroke. Privacy: aggregate logs, don't store raw PII queries. Example: Google Suggest — precomputed trie shards + aggressive CDN. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Weekly rebuild = stale trending queries. Top-K only — no full corpus scan at keystroke. Privacy: aggregate logs, don't store raw PII queries.
 
----
-
-## Writes & throughput
+**Example:** *Google Suggest — precomputed trie shards + aggressive CDN.*
 
 ### 🟢 Scale writes past single DB
 
+> [!CAUTION]
+> **🔴 Weak** — Shard later when Postgres is full.
+>
+> [!WARNING]
+> **🟡 Strong** — **Vertical scale** until pain is real, then **shard** by high-cardinality key (`user_id`, `tenant_id`). Alternative: **append-only** store (Cassandra, DynamoDB) for write-heavy access patterns. **Denormalize** — one physical table per query pattern (CQRS).
+>
 > [!TIP]
-> **Staff-level answer:** **Vertical scale** until pain is real, then **shard** by high-cardinality key (`user_id`, `tenant_id`). Alternative: **append-only** store (Cassandra, DynamoDB) for write-heavy access patterns. **Denormalize** — one physical table per query pattern (CQRS).
->
-> **Trade-offs:** Sharding kills cross-shard JOINs and global transactions. Cassandra tuning (consistency level, compaction) is specialized. Premature sharding is ops nightmare.
->
-> **Example:** *Instagram shards media metadata by `user_id` when single PG master saturated.*
+> **🟢 Staff+** — Sharding kills cross-shard JOINs and global transactions. Cassandra tuning (consistency level, compaction) is specialized. Premature sharding is ops nightmare. Example: Instagram shards media metadata by `user_id` when single PG master saturated. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Sharding kills cross-shard JOINs and global transactions. Cassandra tuning (consistency level, compaction) is specialized. Premature sharding is ops nightmare.
 
----
+**Example:** *Instagram shards media metadata by `user_id` when single PG master saturated.*
 
 ### 🟠 High write burst (flash sale)
 
+> [!CAUTION]
+> **🔴 Weak** — Queue everyone in one mutex — fairness first.
+>
 > [!WARNING]
-> **Staff-level answer:** **Queue** purchase intents (Kafka/SQS). **Redis decr** or token bucket for inventory pre-check. **Single-row transaction** on PG for final commit. **Waitroom** / token at edge (Cloudflare Waiting Room) before API.
+> **🟡 Strong** — **Queue** purchase intents (Kafka/SQS). **Redis decr** or token bucket for inventory pre-check. **Single-row transaction** on PG for final commit. **Waitroom** / token at edge (Cloudflare Waiting Room) before API.
 >
-> **Trade-offs:** Queue adds seconds of latency to confirmation. Redis pre-check can oversell if not reconciled with DB — DB must be final arbiter.
->
-> **Example:** *Ticketmaster — virtual queue + Redis seat hold TTL + PG `SELECT FOR UPDATE`.*
+> [!TIP]
+> **🟢 Staff+** — Queue adds seconds of latency to confirmation. Redis pre-check can oversell if not reconciled with DB — DB must be final arbiter. Example: Ticketmaster — virtual queue + Redis seat hold TTL + PG `SELECT FOR UPDATE`. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Queue adds seconds of latency to confirmation. Redis pre-check can oversell if not reconciled with DB — DB must be final arbiter.
+
+**Example:** *Ticketmaster — virtual queue + Redis seat hold TTL + PG `SELECT FOR UPDATE`.*
 
 📊 **Visual:** [Seat hold 2-phase](interview-quick-fire-diagrams.html#seat-hold)
-
-
----
 
 ### 🟢 Idempotent writes
 
+> [!CAUTION]
+> **🔴 Weak** — Check if row exists, then INSERT — good enough.
+>
+> [!WARNING]
+> **🟡 Strong** — Client sends **`Idempotency-Key`** (UUID). Server stores `(key → response)` in Redis/DB with 24h TTL. Duplicate request returns cached response without re-executing side effects.
+>
 > [!TIP]
-> **Staff-level answer:** Client sends **`Idempotency-Key`** (UUID). Server stores `(key → response)` in Redis/DB with 24h TTL. Duplicate request returns cached response without re-executing side effects.
->
-> **Trade-offs:** Storage for keys. Key scope definition (per user vs global). Retries must send same key and body.
->
-> **Example:** *Stripe — same idempotency key on network retry never double-charges.*
+> **🟢 Staff+** — Storage for keys. Key scope definition (per user vs global). Retries must send same key and body. Example: Stripe — same idempotency key on network retry never double-charges. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Storage for keys. Key scope definition (per user vs global). Retries must send same key and body.
+
+**Example:** *Stripe — same idempotency key on network retry never double-charges.*
 
 📊 **Visual:** [Idempotency](interview-quick-fire-diagrams.html#idempotency)
 
-
----
-
 ### 🟠 Prevent double booking
 
+> [!CAUTION]
+> **🔴 Weak** — SELECT then UPDATE in application code.
+>
 > [!WARNING]
-> **Staff-level answer:** **Pessimistic:** `SELECT FOR UPDATE` in transaction. **Optimistic:** version column `UPDATE ... WHERE version = ?`. Always **idempotency key** on client retries. Fail closed on conflict (409), never silent overwrite.
+> **🟡 Strong** — **Pessimistic:** `SELECT FOR UPDATE` in transaction. **Optimistic:** version column `UPDATE ... WHERE version = ?`. Always **idempotency key** on client retries. Fail closed on conflict (409), never silent overwrite.
 >
-> **Trade-offs:** Pessimistic locks reduce concurrency (hot row serialization). Optimistic fails under high contention — need UX retry.
->
-> **Example:** *Airline seat map — row lock on `seat_id` for duration of checkout session.*
+> [!TIP]
+> **🟢 Staff+** — Pessimistic locks reduce concurrency (hot row serialization). Optimistic fails under high contention — need UX retry. Example: Airline seat map — row lock on `seat_id` for duration of checkout session. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Pessimistic locks reduce concurrency (hot row serialization). Optimistic fails under high contention — need UX retry.
+
+**Example:** *Airline seat map — row lock on `seat_id` for duration of checkout session.*
 
 📊 **Visual:** [Seat hold 2-phase](interview-quick-fire-diagrams.html#seat-hold)
 
-
----
-
 ### 🟢 Distributed counter
 
+> [!CAUTION]
+> **🔴 Weak** — INCR one global Redis key for all traffic.
+>
+> [!WARNING]
+> **🟡 Strong** — **Redis INCR** for real-time; **batch flush** to DB every N seconds. Or **pre-allocated ranges** per server (Snowflake-style). Never `read → add → write` in app without CAS.
+>
 > [!TIP]
-> **Staff-level answer:** **Redis INCR** for real-time; **batch flush** to DB every N seconds. Or **pre-allocated ranges** per server (Snowflake-style). Never `read → add → write` in app without CAS.
->
-> **Trade-offs:** Flush window loses counts on Redis failure unless AOF enabled. Range allocation can leave gaps on crash.
->
-> **Example:** *YouTube view counter — approximate counts OK; HyperLogLog or batched increments.*
+> **🟢 Staff+** — Flush window loses counts on Redis failure unless AOF enabled. Range allocation can leave gaps on crash. Example: YouTube view counter — approximate counts OK; HyperLogLog or batched increments. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Flush window loses counts on Redis failure unless AOF enabled. Range allocation can leave gaps on crash.
 
----
+**Example:** *YouTube view counter — approximate counts OK; HyperLogLog or batched increments.*
 
 ### 🟢 Unique ID at scale
 
-> [!TIP]
-> **Staff-level answer:** **Snowflake** (time + machine + sequence) for sortable 64-bit IDs. **UUID v7** for distributed without coordination. **DB sequence** with `hi/lo` allocation per app instance for simplicity.
+> [!CAUTION]
+> **🔴 Weak** — UUID v4 everywhere — collisions are negligible.
 >
-> **Trade-offs:** Snowflake needs clock sync and machine ID registry. UUIDs aren't human-friendly. Sequential IDs leak growth rate.
->
-> **Example:** *Twitter Snowflake — roughly time-ordered tweets without central DB.*
-
-
----
-
-## Availability & resilience
-
 > [!WARNING]
-> **🟠 High** — Resilience under stress — name degraded mode + recovery
+> **🟡 Strong** — **Snowflake** (time + machine + sequence) for sortable 64-bit IDs. **UUID v7** for distributed without coordination. **DB sequence** with `hi/lo` allocation per app instance for simplicity.
+>
+> [!TIP]
+> **🟢 Staff+** — Snowflake needs clock sync and machine ID registry. UUIDs aren't human-friendly. Sequential IDs leak growth rate. Example: Twitter Snowflake — roughly time-ordered tweets without central DB. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Snowflake needs clock sync and machine ID registry. UUIDs aren't human-friendly. Sequential IDs leak growth rate.
+
+**Example:** *Twitter Snowflake — roughly time-ordered tweets without central DB.*
 
 ### 🟠 Handle traffic spikes
 
+> [!CAUTION]
+> **🔴 Weak** — Autoscale app servers; the DB will keep up.
+>
 > [!WARNING]
-> **Staff-level answer:** **Stateless** app tier behind LB + **autoscale** on CPU/RPS/queue depth. **Absorb burst** in Kafka/SQS. **Circuit breakers** on downstreams. **Rate limit** at edge before origin melts.
+> **🟡 Strong** — **Stateless** app tier behind LB + **autoscale** on CPU/RPS/queue depth. **Absorb burst** in Kafka/SQS. **Circuit breakers** on downstreams. **Rate limit** at edge before origin melts.
 >
-> **Trade-offs:** Autoscale lags minutes — need buffer (queue) or pre-warming for known events. Breakers cause errors for edge cases during recovery.
->
-> **Example:** *Shopify Black Friday — checkout writes queued; read path scaled horizontally.*
+> [!TIP]
+> **🟢 Staff+** — Autoscale lags minutes — need buffer (queue) or pre-warming for known events. Breakers cause errors for edge cases during recovery. Example: Shopify Black Friday — checkout writes queued; read path scaled horizontally. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Autoscale lags minutes — need buffer (queue) or pre-warming for known events. Breakers cause errors for edge cases during recovery.
 
----
+**Example:** *Shopify Black Friday — checkout writes queued; read path scaled horizontally.*
 
 ### 🟠 Eliminate single point of failure
 
+> [!CAUTION]
+> **🔴 Weak** — Run two of everything in one AZ.
+>
 > [!WARNING]
-> **Staff-level answer:** Redundancy at **every** tier: 2+ LBs (anycast or DNS failover), N app instances, DB **primary + sync replica**, Redis **primary + replica**, multi-AZ. **Health checks** remove unhealthy targets; **chaos drills** prove it works.
+> **🟡 Strong** — Redundancy at **every** tier: 2+ LBs (anycast or DNS failover), N app instances, DB **primary + sync replica**, Redis **primary + replica**, multi-AZ. **Health checks** remove unhealthy targets; **chaos drills** prove it works.
 >
-> **Trade-offs:** Cost doubles (or more). Split-brain risk if failover automation wrong. Complexity of active-active vs active-passive.
->
-> **Example:** *RDS Multi-AZ — sync standby promotion on primary failure.*
+> [!TIP]
+> **🟢 Staff+** — Cost doubles (or more). Split-brain risk if failover automation wrong. Complexity of active-active vs active-passive. Example: RDS Multi-AZ — sync standby promotion on primary failure. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Cost doubles (or more). Split-brain risk if failover automation wrong. Complexity of active-active vs active-passive.
 
----
+**Example:** *RDS Multi-AZ — sync standby promotion on primary failure.*
 
 ### 🟠 DB primary fails
 
+> [!CAUTION]
+> **🔴 Weak** — Manual failover when someone pages you.
+>
 > [!WARNING]
-> **Staff-level answer:** Automated **failover** to sync replica (Orchestrator, Patroni, RDS Multi-AZ). Apps use **DNS/connection string** that updates or **proxy** (PgBouncer, RDS Proxy). **Retry with backoff** on transient connection errors.
+> **🟡 Strong** — Automated **failover** to sync replica (Orchestrator, Patroni, RDS Multi-AZ). Apps use **DNS/connection string** that updates or **proxy** (PgBouncer, RDS Proxy). **Retry with backoff** on transient connection errors.
 >
-> **Trade-offs:** Failover takes 15–60s — in-flight transactions fail. Sync replica lag = data loss window if async (unacceptable for money).
->
-> **Example:** *Payments — sync replication only; accept unavailable during AZ failure, not wrong balance.*
+> [!TIP]
+> **🟢 Staff+** — Failover takes 15–60s — in-flight transactions fail. Sync replica lag = data loss window if async (unacceptable for money). Example: Payments — sync replication only; accept unavailable during AZ failure, not wrong balance. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Failover takes 15–60s — in-flight transactions fail. Sync replica lag = data loss window if async (unacceptable for money).
 
----
+**Example:** *Payments — sync replication only; accept unavailable during AZ failure, not wrong balance.*
 
 ### 🟠 Cascading failure
 
+> [!CAUTION]
+> **🔴 Weak** — Retry until downstream recovers.
+>
 > [!WARNING]
-> **Staff-level answer:** **Timeouts** < client deadline everywhere. **Bulkheads** (separate pools for critical vs batch). **Circuit breakers** stop calling sick deps. **Load shed** non-critical endpoints first (recommendations off, core checkout on).
+> **🟡 Strong** — **Timeouts** < client deadline everywhere. **Bulkheads** (separate pools for critical vs batch). **Circuit breakers** stop calling sick deps. **Load shed** non-critical endpoints first (recommendations off, core checkout on).
 >
-> **Trade-offs:** Shedding angers users on deprioritized features. Tight timeouts cause false failures on slow but healthy deps — tune per dependency.
->
-> **Example:** *Netflix Hystrix-era pattern — fallback static list when recommendation service down.*
+> [!TIP]
+> **🟢 Staff+** — Shedding angers users on deprioritized features. Tight timeouts cause false failures on slow but healthy deps — tune per dependency. Example: Netflix Hystrix-era pattern — fallback static list when recommendation service down. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Shedding angers users on deprioritized features. Tight timeouts cause false failures on slow but healthy deps — tune per dependency.
+
+**Example:** *Netflix Hystrix-era pattern — fallback static list when recommendation service down.*
 
 📊 **Visual:** [Retry storm](interview-quick-fire-diagrams.html#retry-storm)
 
-
----
-
 ### 🟠 Regional outage
 
+> [!CAUTION]
+> **🔴 Weak** — Multi-region active-active from day one.
+>
 > [!WARNING]
-> **Staff-level answer:** **Multi-region** deployment with GeoDNS failover. Define **RPO/RTO** per service. **Active-passive** for strong consistency workloads; **active-active** only with conflict resolution story.
+> **🟡 Strong** — **Multi-region** deployment with GeoDNS failover. Define **RPO/RTO** per service. **Active-passive** for strong consistency workloads; **active-active** only with conflict resolution story.
 >
-> **Trade-offs:** Active-active cross-region writes need CRDTs, last-write-wins, or partitioned tenants. Failover drills required — DNS TTL stalls traffic shift.
->
-> **Example:** *S3 cross-region replication for media; API active-passive with Route53 health checks.*
+> [!TIP]
+> **🟢 Staff+** — Active-active cross-region writes need CRDTs, last-write-wins, or partitioned tenants. Failover drills required — DNS TTL stalls traffic shift. Example: S3 cross-region replication for media; API active-passive with Route53 health checks. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Active-active cross-region writes need CRDTs, last-write-wins, or partitioned tenants. Failover drills required — DNS TTL stalls traffic shift.
 
----
+**Example:** *S3 cross-region replication for media; API active-passive with Route53 health checks.*
 
 ### 🟠 Zero-downtime deploy
 
+> [!CAUTION]
+> **🔴 Weak** — Rolling restart — users won't notice brief errors.
+>
 > [!WARNING]
-> **Staff-level answer:** **Rolling deploy** behind LB (drain connections). **Readiness vs liveness** probes. **Feature flags** for risky code paths. **Blue-green** or **canary** (1% traffic) with automatic rollback on error budget burn.
+> **🟡 Strong** — **Rolling deploy** behind LB (drain connections). **Readiness vs liveness** probes. **Feature flags** for risky code paths. **Blue-green** or **canary** (1% traffic) with automatic rollback on error budget burn.
 >
-> **Trade-offs:** Two versions running during rollout — schema must be backward compatible. Canary needs traffic routing infra.
->
-> **Example:** *Kubernetes rolling update `maxUnavailable: 0` + PDB.*
+> [!TIP]
+> **🟢 Staff+** — Two versions running during rollout — schema must be backward compatible. Canary needs traffic routing infra. Example: Kubernetes rolling update `maxUnavailable: 0` + PDB. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Two versions running during rollout — schema must be backward compatible. Canary needs traffic routing infra.
 
----
-
-## Consistency & correctness
-
-> [!IMPORTANT]
-> **🟣 Important** — Correctness / invariants — strong consistency territory
-
+**Example:** *Kubernetes rolling update `maxUnavailable: 0` + PDB.*
 
 ### 🟣 Strong vs eventual consistency
 
-> [!IMPORTANT]
-> **Staff-level answer:** Draw a line: **strong (ACID)** where invariants matter (money, inventory, seat). **Eventual** for search index, analytics, activity feeds. Say aloud: *"This path is AP; users may see 2s lag."*
+> [!CAUTION]
+> **🔴 Weak** — Always use strong consistency — users hate stale data.
 >
-> **Trade-offs:** Strong limits throughput and complicates geo distribution. Eventual needs UX that tolerates staleness or self-corrects.
+> [!WARNING]
+> **🟡 Strong** — Draw a line: **strong (ACID)** where invariants matter (money, inventory, seat). **Eventual** for search index, analytics, activity feeds. Say aloud: *"This path is AP; users may see 2s lag."*
 >
-> **Example:** *Bank transfer — PG transaction. Instagram like count — eventual + periodic reconcile.*
+> [!TIP]
+> **🟢 Staff+** — Strong limits throughput and complicates geo distribution. Eventual needs UX that tolerates staleness or self-corrects. Example: Bank transfer — PG transaction. Instagram like count — eventual + periodic reconcile. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Strong limits throughput and complicates geo distribution. Eventual needs UX that tolerates staleness or self-corrects.
 
----
+**Example:** *Bank transfer — PG transaction. Instagram like count — eventual + periodic reconcile.*
 
 ### 🟣 Guarantee exactly-once
 
-> [!IMPORTANT]
-> **Staff-level answer:** True exactly-once needs **distributed transactions (2PC)** or **Kafka transactions** — expensive and fragile. Default: **at-least-once delivery + idempotent consumer** + dedup store. Document: *"Duplicates possible but harmless."*
+> [!CAUTION]
+> **🔴 Weak** — Kafka exactly-once semantics solve it end-to-end.
 >
-> **Trade-offs:** Idempotency design burden on every handler. 2PC blocks on coordinator failure.
+> [!WARNING]
+> **🟡 Strong** — True exactly-once needs **distributed transactions (2PC)** or **Kafka transactions** — expensive and fragile. Default: **at-least-once delivery + idempotent consumer** + dedup store. Document: *"Duplicates possible but harmless."*
 >
-> **Example:** *Payment webhook — store `event_id` before crediting wallet.*
+> [!TIP]
+> **🟢 Staff+** — Idempotency design burden on every handler. 2PC blocks on coordinator failure. Example: Payment webhook — store `event_id` before crediting wallet. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Idempotency design burden on every handler. 2PC blocks on coordinator failure.
 
----
+**Example:** *Payment webhook — store `event_id` before crediting wallet.*
 
 ### 🟣 Cross-service transaction
 
-> [!IMPORTANT]
-> **Staff-level answer:** Avoid 2PC across microservices. Use **saga**: local TX + event; on downstream failure run **compensating transaction** (refund, cancel hold). **Outbox pattern** ensures event published iff local commit.
+> [!CAUTION]
+> **🔴 Weak** — Two-phase commit across all microservices.
 >
-> **Trade-offs:** Sagas are eventually consistent — intermediate states visible. Compensation logic is easy to get wrong (need idempotent compensations).
+> [!WARNING]
+> **🟡 Strong** — Avoid 2PC across microservices. Use **saga**: local TX + event; on downstream failure run **compensating transaction** (refund, cancel hold). **Outbox pattern** ensures event published iff local commit.
 >
-> **Example:** *Travel booking — reserve flight → reserve hotel; if hotel fails, saga publishes cancel-flight.*
+> [!TIP]
+> **🟢 Staff+** — Sagas are eventually consistent — intermediate states visible. Compensation logic is easy to get wrong (need idempotent compensations). Example: Travel booking — reserve flight → reserve hotel; if hotel fails, saga publishes cancel-flight. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Sagas are eventually consistent — intermediate states visible. Compensation logic is easy to get wrong (need idempotent compensations).
+
+**Example:** *Travel booking — reserve flight → reserve hotel; if hotel fails, saga publishes cancel-flight.*
 
 📊 **Visual:** [Saga](interview-quick-fire-diagrams.html#saga)
 
-
----
-
 ### 🟣 Read-your-writes
 
-> [!IMPORTANT]
-> **Staff-level answer:** After write, route that user's reads to **primary** or **sticky session** to leader for N seconds. Or return **updated entity in write response** so client doesn't need immediate re-read.
+> [!CAUTION]
+> **🔴 Weak** — Sticky sessions to any random replica.
 >
-> **Trade-offs:** Primary reads reduce replica utility. Stickiness complicates load balancing.
+> [!WARNING]
+> **🟡 Strong** — After write, route that user's reads to **primary** or **sticky session** to leader for N seconds. Or return **updated entity in write response** so client doesn't need immediate re-read.
 >
-> **Example:** *Post tweet — API returns tweet object; timeline refresh uses primary for 3s.*
+> [!TIP]
+> **🟢 Staff+** — Primary reads reduce replica utility. Stickiness complicates load balancing. Example: Post tweet — API returns tweet object; timeline refresh uses primary for 3s. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Primary reads reduce replica utility. Stickiness complicates load balancing.
+
+**Example:** *Post tweet — API returns tweet object; timeline refresh uses primary for 3s.*
 
 📊 **Visual:** [Replica lag](interview-quick-fire-diagrams.html#replica-lag)
 
-
----
-
-## Fan-out & real-time
-
 ### 🟢 Fan-out to millions of followers
 
+> [!CAUTION]
+> **🔴 Weak** — Push every post to every follower's feed on write.
+>
+> [!WARNING]
+> **🟡 Strong** — **Hybrid fan-out:** push (precompute timeline on write) for normal accounts; **pull** (assemble on read) for celebrities above threshold (e.g. 10K followers). **Kafka** for async fan-out workers; **Cassandra/Redis** for timeline storage.
+>
 > [!TIP]
-> **Staff-level answer:** **Hybrid fan-out:** push (precompute timeline on write) for normal accounts; **pull** (assemble on read) for celebrities above threshold (e.g. 10K followers). **Kafka** for async fan-out workers; **Cassandra/Redis** for timeline storage.
->
-> **Trade-offs:** Push wastes work for inactive followers. Pull makes celebrity read slow — cache materialized partial feeds.
->
-> **Example:** *Twitter — push for most; pull for Bieber-class accounts.*
+> **🟢 Staff+** — Push wastes work for inactive followers. Pull makes celebrity read slow — cache materialized partial feeds. Example: Twitter — push for most; pull for Bieber-class accounts. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Push wastes work for inactive followers. Pull makes celebrity read slow — cache materialized partial feeds.
+
+**Example:** *Twitter — push for most; pull for Bieber-class accounts.*
 
 📊 **Visual:** [Fan-out hybrid](interview-quick-fire-diagrams.html#fan-out)
 
-
----
-
 ### 🟢 WebSocket at scale
 
+> [!CAUTION]
+> **🔴 Weak** — One giant WebSocket server holds all connections.
+>
+> [!WARNING]
+> **🟡 Strong** — **Dedicated connection tier** scaled separately from API. **Sticky sessions** or **pub/sub bridge** (Redis/Kafka) so any server can push to user on any connection server. **Connection registry:** `user_id → server_id`.
+>
 > [!TIP]
-> **Staff-level answer:** **Dedicated connection tier** scaled separately from API. **Sticky sessions** or **pub/sub bridge** (Redis/Kafka) so any server can push to user on any connection server. **Connection registry:** `user_id → server_id`.
->
-> **Trade-offs:** Sticky sessions complicate deploys and imbalance load. Pub/sub adds latency vs local-only push.
->
-> **Example:** *Slack — channel-based pub/sub; co-locate busy channels where possible.*
+> **🟢 Staff+** — Sticky sessions complicate deploys and imbalance load. Pub/sub adds latency vs local-only push. Example: Slack — channel-based pub/sub; co-locate busy channels where possible. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Sticky sessions complicate deploys and imbalance load. Pub/sub adds latency vs local-only push.
 
----
+**Example:** *Slack — channel-based pub/sub; co-locate busy channels where possible.*
 
 ### 🟢 Push notifications at scale
 
+> [!CAUTION]
+> **🔴 Weak** — Loop over all device tokens and send synchronously.
+>
+> [!WARNING]
+> **🟡 Strong** — API validates → **dedup** (`SETNX event_id`) → **per-channel Kafka topics** → workers call APNs/FCM. **Stagger** viral fan-out over 60–120s. **Remove dead tokens** immediately on provider error.
+>
 > [!TIP]
-> **Staff-level answer:** API validates → **dedup** (`SETNX event_id`) → **per-channel Kafka topics** → workers call APNs/FCM. **Stagger** viral fan-out over 60–120s. **Remove dead tokens** immediately on provider error.
->
-> **Trade-offs:** At-least-once delivery — dedup mandatory. Provider rate limits cap throughput — queue depth monitoring critical.
->
-> **Example:** *Uber ride arrived — high-priority queue bypasses marketing rate cap.*
+> **🟢 Staff+** — At-least-once delivery — dedup mandatory. Provider rate limits cap throughput — queue depth monitoring critical. Example: Uber ride arrived — high-priority queue bypasses marketing rate cap. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** At-least-once delivery — dedup mandatory. Provider rate limits cap throughput — queue depth monitoring critical.
 
----
-
-## Storage & media
+**Example:** *Uber ride arrived — high-priority queue bypasses marketing rate cap.*
 
 ### 🟢 Store large files
 
+> [!CAUTION]
+> **🔴 Weak** — Multipart upload to S3 in one HTTP request.
+>
+> [!WARNING]
+> **🟡 Strong** — **S3/GCS** for bytes; **DB for metadata** only. **Pre-signed URLs** for direct client upload/download — bytes never through app servers. **CDN** for read path.
+>
 > [!TIP]
-> **Staff-level answer:** **S3/GCS** for bytes; **DB for metadata** only. **Pre-signed URLs** for direct client upload/download — bytes never through app servers. **CDN** for read path.
->
-> **Trade-offs:** Presigned URL leakage = temporary exposure — short TTL. Multipart upload complexity. Listing large buckets is slow — index metadata in DB.
->
-> **Example:** *Dropbox — metadata service + direct S3 chunk upload.*
+> **🟢 Staff+** — Presigned URL leakage = temporary exposure — short TTL. Multipart upload complexity. Listing large buckets is slow — index metadata in DB. Example: Dropbox — metadata service + direct S3 chunk upload. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Presigned URL leakage = temporary exposure — short TTL. Multipart upload complexity. Listing large buckets is slow — index metadata in DB.
 
----
+**Example:** *Dropbox — metadata service + direct S3 chunk upload.*
 
 ### 🟢 Video streaming
 
+> [!CAUTION]
+> **🔴 Weak** — Serve the original 4K file — clients buffer.
+>
+> [!WARNING]
+> **🟡 Strong** — Upload → **transcode ladder** (360p–4K) → **HLS segments** in object storage → **CDN**. **ABR manifest** lets client switch bitrate. Metadata in PG; bytes never in SQL.
+>
 > [!TIP]
-> **Staff-level answer:** Upload → **transcode ladder** (360p–4K) → **HLS segments** in object storage → **CDN**. **ABR manifest** lets client switch bitrate. Metadata in PG; bytes never in SQL.
->
-> **Trade-offs:** Transcode lag — publish before all bitrates ready (progressive). Storage multiplication per resolution.
->
-> **Example:** *YouTube — parallel transcode jobs; 360p available within seconds.*
+> **🟢 Staff+** — Transcode lag — publish before all bitrates ready (progressive). Storage multiplication per resolution. Example: YouTube — parallel transcode jobs; 360p available within seconds. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Transcode lag — publish before all bitrates ready (progressive). Storage multiplication per resolution.
 
----
-
-## Messaging & async
+**Example:** *YouTube — parallel transcode jobs; 360p available within seconds.*
 
 ### 🟢 Decouple services
 
+> [!CAUTION]
+> **🔴 Weak** — REST sync call chain between every service.
+>
+> [!WARNING]
+> **🟡 Strong** — **Kafka/SQS** between producer and consumer. Producer writes message and returns; consumer scales on **lag**. **DLQ** for failures after N retries.
+>
 > [!TIP]
-> **Staff-level answer:** **Kafka/SQS** between producer and consumer. Producer writes message and returns; consumer scales on **lag**. **DLQ** for failures after N retries.
->
-> **Trade-offs:** Eventually consistent — user waits for async completion. Message ordering only per partition/key.
->
-> **Example:** *Email send — API enqueues; worker pool sends via SES.*
+> **🟢 Staff+** — Eventually consistent — user waits for async completion. Message ordering only per partition/key. Example: Email send — API enqueues; worker pool sends via SES. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Eventually consistent — user waits for async completion. Message ordering only per partition/key.
+
+**Example:** *Email send — API enqueues; worker pool sends via SES.*
 
 📊 **Visual:** [Poison message](interview-quick-fire-diagrams.html#poison-message) *(queue + DLQ pattern)*
 
-
----
-
 ### 🟢 Webhook delivery
 
+> [!CAUTION]
+> **🔴 Weak** — Fire-and-forget HTTP POST from the request path.
+>
+> [!WARNING]
+> **🟡 Strong** — **Outbox table** in same TX as state change. Worker polls outbox, POSTs to merchant URL, **exponential backoff**, **DLQ** + dashboard for manual replay. **HMAC signature** on payload.
+>
 > [!TIP]
-> **Staff-level answer:** **Outbox table** in same TX as state change. Worker polls outbox, POSTs to merchant URL, **exponential backoff**, **DLQ** + dashboard for manual replay. **HMAC signature** on payload.
->
-> **Trade-offs:** Merchant endpoint down → backlog grows — need max retention and alerting. Replay requires idempotent merchant API.
->
-> **Example:** *Stripe webhooks — signing secret; retry up to 3 days.*
+> **🟢 Staff+** — Merchant endpoint down → backlog grows — need max retention and alerting. Replay requires idempotent merchant API. Example: Stripe webhooks — signing secret; retry up to 3 days. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Merchant endpoint down → backlog grows — need max retention and alerting. Replay requires idempotent merchant API.
+
+**Example:** *Stripe webhooks — signing secret; retry up to 3 days.*
 
 📊 **Visual:** [Dual-write vs outbox](interview-quick-fire-diagrams.html#dual-write)
 
-
----
-
-## Security & abuse
-
 ### 🟠 Rate limiting
 
+> [!CAUTION]
+> **🔴 Weak** — Return 429 when count > 100 — no per-user fairness.
+>
 > [!WARNING]
-> **Staff-level answer:** **Token bucket** or sliding window in Redis per `(user_id | IP | API key)`. Return **429 + Retry-After**. **Edge rate limit** (CDN/WAF) before origin. Separate tiers for auth vs anonymous.
+> **🟡 Strong** — **Token bucket** or sliding window in Redis per `(user_id | IP | API key)`. Return **429 + Retry-After**. **Edge rate limit** (CDN/WAF) before origin. Separate tiers for auth vs anonymous.
 >
-> **Trade-offs:** Redis failure — fail open (abuse risk) vs fail closed (outage). Shared NAT IPs punish corporate users.
->
-> **Example:** *GitHub API — `X-RateLimit-Remaining` headers.*
+> [!TIP]
+> **🟢 Staff+** — Redis failure — fail open (abuse risk) vs fail closed (outage). Shared NAT IPs punish corporate users. Example: GitHub API — `X-RateLimit-Remaining` headers. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Redis failure — fail open (abuse risk) vs fail closed (outage). Shared NAT IPs punish corporate users.
 
----
+**Example:** *GitHub API — `X-RateLimit-Remaining` headers.*
 
 ### 🟠 DDoS / abuse
 
+> [!CAUTION]
+> **🔴 Weak** — Block bad IPs in application code after they hit us.
+>
 > [!WARNING]
-> **Staff-level answer:** **CDN + WAF** absorb L3/L7. **Challenge** (JS/captcha) for suspicious ASNs. **Origin only accepts CDN IP ranges**. Anomaly detection on error rate and geographic spikes.
+> **🟡 Strong** — **CDN + WAF** absorb L3/L7. **Challenge** (JS/captcha) for suspicious ASNs. **Origin only accepts CDN IP ranges**. Anomaly detection on error rate and geographic spikes.
 >
-> **Trade-offs:** WAF false positives block legit users. CDN cost scales with attack size.
->
-> **Example:** *Cloudflare Under Attack mode — interactive challenge before origin.*
+> [!TIP]
+> **🟢 Staff+** — WAF false positives block legit users. CDN cost scales with attack size. Example: Cloudflare Under Attack mode — interactive challenge before origin. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** WAF false positives block legit users. CDN cost scales with attack size.
 
----
-
-## Observability & ops
+**Example:** *Cloudflare Under Attack mode — interactive challenge before origin.*
 
 ### 🔵 Debug production incidents
 
-> [!NOTE]
-> **Staff-level answer:** **`trace_id`** propagated through headers. **Structured JSON logs**. **Metrics:** latency histogram, error rate, saturation (CPU, pool, queue depth). **Distributed tracing** (Jaeger/Tempo) for cross-service causality.
+> [!CAUTION]
+> **🔴 Weak** — SSH in and tail logs on one server.
 >
-> **Trade-offs:** High-cardinality labels explode metrics cost. Trace sampling misses rare bugs — tail-based sampling helps.
+> [!WARNING]
+> **🟡 Strong** — **`trace_id`** propagated through headers. **Structured JSON logs**. **Metrics:** latency histogram, error rate, saturation (CPU, pool, queue depth). **Distributed tracing** (Jaeger/Tempo) for cross-service causality.
 >
-> **Example:** *p99 spike — trace shows one shard ES query 2s; others 20ms.*
+> [!TIP]
+> **🟢 Staff+** — High-cardinality labels explode metrics cost. Trace sampling misses rare bugs — tail-based sampling helps. Example: p99 spike — trace shows one shard ES query 2s; others 20ms. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** High-cardinality labels explode metrics cost. Trace sampling misses rare bugs — tail-based sampling helps.
 
----
+**Example:** *p99 spike — trace shows one shard ES query 2s; others 20ms.*
 
 ### 🔵 Cardinality explosion (metrics)
 
-> [!NOTE]
-> **Staff-level answer:** **Label allowlists** per metric — no `user_id` on request latency. **Cap series** per metric; reject or aggregate high-cardinality labels. **Recording rules** for aggregates.
+> [!CAUTION]
+> **🔴 Weak** — Tag every span with user_id for rich dashboards.
 >
-> **Trade-offs:** Less per-user debuggability in metrics — use traces/logs for that. Allowlist slows developer iteration.
+> [!WARNING]
+> **🟡 Strong** — **Label allowlists** per metric — no `user_id` on request latency. **Cap series** per metric; reject or aggregate high-cardinality labels. **Recording rules** for aggregates.
 >
-> **Example:** *Datadog bill 3× after someone tagged `user_id` on HTTP metric.*
+> [!TIP]
+> **🟢 Staff+** — Less per-user debuggability in metrics — use traces/logs for that. Allowlist slows developer iteration. Example: Datadog bill 3× after someone tagged `user_id` on HTTP metric. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Less per-user debuggability in metrics — use traces/logs for that. Allowlist slows developer iteration.
 
----
-
-## Geo & search
+**Example:** *Datadog bill 3× after someone tagged `user_id` on HTTP metric.*
 
 ### 🟢 Nearby search (Yelp, Uber)
 
+> [!CAUTION]
+> **🔴 Weak** — PostGIS radius query on every map pan.
+>
+> [!WARNING]
+> **🟡 Strong** — **Geohash prefix** or PostGIS `ST_DWithin` for coarse filter → **refine** with haversine on small candidate set. **Cache** results per `(lat,lng, radius)` cell. Moving objects: **Redis GEO** + periodic refresh.
+>
 > [!TIP]
-> **Staff-level answer:** **Geohash prefix** or PostGIS `ST_DWithin` for coarse filter → **refine** with haversine on small candidate set. **Cache** results per `(lat,lng, radius)` cell. Moving objects: **Redis GEO** + periodic refresh.
->
-> **Trade-offs:** Geohash edge cases — query neighbor cells. PostGIS on huge tables needs GiST index and connection pool tuning.
->
-> **Example:** *Uber — geohash grid + surge pricing per cell.*
+> **🟢 Staff+** — Geohash edge cases — query neighbor cells. PostGIS on huge tables needs GiST index and connection pool tuning. Example: Uber — geohash grid + surge pricing per cell. Name metric + revisit trigger when they push depth.
 
+**Trade-offs:** Geohash edge cases — query neighbor cells. PostGIS on huge tables needs GiST index and connection pool tuning.
 
----
-
-## Money & transactions
+**Example:** *Uber — geohash grid + surge pricing per cell.*
 
 ### 🔴 Payment correctness
 
 > [!CAUTION]
-> **Staff-level answer:** **Double-entry ledger** (debits = credits). **Idempotency key** per payment attempt. **Never assume timeout = failure** — query PSP with same key before retry. **Immutable event log**.
+> **🔴 Weak** — Charge the card; if timeout, retry the charge.
 >
-> **Trade-offs:** Ledger storage grows forever — archive policy. Reconciliation jobs add ops. Strong consistency limits TPS per shard.
+> [!WARNING]
+> **🟡 Strong** — **Double-entry ledger** (debits = credits). **Idempotency key** per payment attempt. **Never assume timeout = failure** — query PSP with same key before retry. **Immutable event log**.
 >
-> **Example:** *Stripe — PaymentIntent state machine + idempotent API.*
+> [!TIP]
+> **🟢 Staff+** — Ledger storage grows forever — archive policy. Reconciliation jobs add ops. Strong consistency limits TPS per shard. Example: Stripe — PaymentIntent state machine + idempotent API. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Ledger storage grows forever — archive policy. Reconciliation jobs add ops. Strong consistency limits TPS per shard.
+
+**Example:** *Stripe — PaymentIntent state machine + idempotent API.*
 
 📊 **Visual:** [Idempotency](interview-quick-fire-diagrams.html#idempotency) · [Saga](interview-quick-fire-diagrams.html#saga)
-
-
----
 
 ### 🔴 Inventory / wallet balance
 
 > [!CAUTION]
-> **Staff-level answer:** **Single-row transaction:** `UPDATE inventory SET qty = qty - 1 WHERE id = ? AND qty > 0`. **Available balance** = settled − holds − pending. No cross-request RMW without lock.
+> **🔴 Weak** — UPDATE balance = balance - amount — SQL is atomic.
 >
-> **Trade-offs:** Row-level locking caps QPS on hot SKU. Holds expire — need TTL job to release.
+> [!WARNING]
+> **🟡 Strong** — **Single-row transaction:** `UPDATE inventory SET qty = qty - 1 WHERE id = ? AND qty > 0`. **Available balance** = settled − holds − pending. No cross-request RMW without lock.
 >
-> **Example:** *Airline — seat row locked for 15 min during checkout.*
+> [!TIP]
+> **🟢 Staff+** — Row-level locking caps QPS on hot SKU. Holds expire — need TTL job to release. Example: Airline — seat row locked for 15 min during checkout. Name metric + revisit trigger when they push depth.
+
+**Trade-offs:** Row-level locking caps QPS on hot SKU. Holds expire — need TTL job to release.
+
+**Example:** *Airline — seat row locked for 15 min during checkout.*
 
 📊 **Visual:** [Seat hold 2-phase](interview-quick-fire-diagrams.html#seat-hold)
-
-
----
-
-## Quick decision shortcuts
-
-| If they ask… | Staff answer | Trade-off to name |
-|--------------|--------------|-------------------|
-| SQL or NoSQL? | SQL default; Cassandra/Dynamo when write scale + access pattern is partition-key friendly | Lose ad-hoc JOINs and multi-row transactions |
-| Sync or async? | Sync for user confirmation; async for fan-out and analytics | User waits vs complexity of eventual completion |
-| Push or pull feed? | Push for normal; pull for celebrities | Wasted push work vs slow celebrity reads |
-| REST or WebSocket? | REST CRUD; WebSocket/SSE for server push | Connection state vs simplicity |
-| Cache everything? | Only read-heavy, stale-tolerant paths | Staleness bugs and invalidation toil |
-| Shard now? | When single primary >~10–50K writes/s or storage limit | Cross-shard queries become application-level JOINs |
-
----
-
-## Practice drill
 
 ### 🔵 Level 1 — Quick-fire (30s each)
 

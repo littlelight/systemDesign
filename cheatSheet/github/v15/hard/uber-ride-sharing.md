@@ -288,16 +288,40 @@ A good interview summary is this. Uber is hard because it combines real time geo
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Driver location — ephemeral Redis GEO at 2.5M writes/second
-Weak answer: write driver location to PostgreSQL on every update — it's the source of truth. At 10M drivers × 1 update/4s = 2.5M writes/sec, PostgreSQL collapses at ~50K writes/sec. Strong answer: Redis GEO (GEOADD) for location — in-memory, O(1) write, supports GEORADIUS queries natively. Set a 15-second TTL on every driver key: if the driver stops sending updates, they're automatically removed from the geo index. Staff+ principle: never write ephemeral high-frequency data to a relational database. Location is ephemeral — it changes every 4 seconds and is only needed for the current moment. PostgreSQL is for durable trip records, not live location pings. This distinction drives the entire architecture.
+#### Deep dive 1: Driver location — ephemeral Redis GEO at 2.5M writes/second
+> [!CAUTION]
+> **🔴 Weak** — write driver location to PostgreSQL on every update — it's the source of truth. At 10M drivers × 1 update/4s = 2.5M writes/sec, PostgreSQL collapses at ~50K writes/sec
+>
+> [!WARNING]
+> **🟡 Strong** — Redis GEO (GEOADD) for location — in-memory, O(1) write, supports GEORADIUS queries natively. Set a 15-second TTL on every driver key: if the driver stops sending updates, they're automatically removed from the geo index
+>
+> [!TIP]
+> **🟢 Staff+** — never write ephemeral high-frequency data to a relational database. Location is ephemeral — it changes every 4 seconds and is only needed for the current moment. PostgreSQL is for durable trip records, not live location pings. This distinction drives the entire architecture
 
-Deep dive 2: Matching — low-latency GEORADIUS with driver state management
-Weak answer: query Redis for nearby drivers, pick the closest, dispatch. Strong answer: GEORADIUS returns candidates but dispatch requires an atomic state check — the same driver cannot be assigned to two riders simultaneously. SETNX driver:{id}:status = DISPATCHED: first matcher wins, second finds the key already set and picks the next available driver. TTL on the key prevents stuck DISPATCHED state if the matching service crashes mid-dispatch. Staff+ failure mode: matching service assigns a driver but crashes before confirming to the rider. On client retry, the matching service finds the driver already DISPATCHED to this trip (idempotency via trip_id) and re-confirms without re-dispatching. The trip_id is the idempotency key, not the driver_id.
 
-Deep dive 3: Trip state machine and financial integrity
-Weak answer: store current trip status in Redis for fast access. Strong answer: PostgreSQL for all trip state — REQUESTED → MATCHED → DRIVER_EN_ROUTE → ARRIVED → IN_PROGRESS → COMPLETED. Each transition uses optimistic locking (UPDATE trips SET status=? WHERE id=? AND status=? AND version=N). Zero-row update means a concurrent transition happened — retry or surface the conflict. Staff+ concern: the trip is the financial record. It must be durable, auditable, and ACID. Event sourcing for the trip: every state transition is an immutable event row. The current state is derived from the event log. This gives a complete audit trail for fare disputes and is required for financial regulatory compliance.
+#### Deep dive 2: Matching — low-latency GEORADIUS with driver state management
+> [!CAUTION]
+> **🔴 Weak** — query Redis for nearby drivers, pick the closest, dispatch
+>
+> [!WARNING]
+> **🟡 Strong** — GEORADIUS returns candidates but dispatch requires an atomic state check — the same driver cannot be assigned to two riders simultaneously. SETNX driver:{id}:status = DISPATCHED: first matcher wins, second finds the key already set and picks the next available driver. TTL on the key prevents stuck DISPATCHED state if the matching service crashes mid-dispatch
+>
+> [!TIP]
+> **🟢 Staff+** — : matching service assigns a driver but crashes before confirming to the rider. On client retry, the matching service finds the driver already DISPATCHED to this trip (idempotency via trip_id) and re-confirms without re-dispatching. The trip_id is the idempotency key, not the driver_id
 
-Why the deep dives connect to the scaling problem: "Real-time geospatial search, hotspot traffic, correctness during matching." Each deep dive addresses one layer.
+
+#### Deep dive 3: Trip state machine and financial integrity
+> [!CAUTION]
+> **🔴 Weak** — store current trip status in Redis for fast access
+>
+> [!WARNING]
+> **🟡 Strong** — PostgreSQL for all trip state — REQUESTED → MATCHED → DRIVER_EN_ROUTE → ARRIVED → IN_PROGRESS → COMPLETED. Each transition uses optimistic locking (UPDATE trips SET status=? WHERE id=? AND status=? AND version=N). Zero-row update means a concurrent transition happened — retry or surface the conflict
+>
+> [!TIP]
+> **🟢 Staff+** — the trip is the financial record. It must be durable, auditable, and ACID. Event sourcing for the trip: every state transition is an immutable event row. The current state is derived from the event log. This gives a complete audit trail for fare disputes and is required for financial regulatory compliance
+
+
+_Why the deep dives connect to the scaling problem: "Real-time geospatial search, hotspot traffic, correctness during matching." Each deep dive addresses one layer._
 
 </details>
 

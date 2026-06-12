@@ -255,16 +255,42 @@ A fourth issue is fan out in group chats and multi device delivery. One message 
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Connection management and cross-server message routing at 100M concurrent WebSockets
-Weak answer: use a centralized message broker — every server publishes and subscribes to a shared queue. Strong answer: the core scaling pain is connection state: 100M online users each hold a persistent WebSocket to one of ~3,000 chat servers. A message from user A on server 1 to user B on server 3 must be routed without a central coordinator. Weak answer: Redis Pub/Sub. Strong answer: Redis Pub/Sub + per-user server affinity. Server affinity map: user_id → server_id stored in Redis hash (HSET). On connect: update map. On message send: look up recipient's server, publish to that server's channel. If recipient is offline: write to Cassandra Inbox directly. Staff+ failure mode to name: what happens if the server holding a user's connection goes down? Client reconnects within 5 seconds (exponential backoff). Server affinity map is updated on reconnect. In-flight messages to the old server that weren't delivered: the Inbox ensures they're eventually delivered — real-time delivery is best-effort, durability is guaranteed by Cassandra. Never lose a message even when the delivery path fails.
+#### Deep dive 1: Connection management and cross-server message routing at 100M concurrent WebSockets
+> [!CAUTION]
+> **🔴 Weak** — use a centralized message broker — every server publishes and subscribes to a shared queue
+>
+> [!WARNING]
+> **🟡 Strong** — the core scaling pain is connection state: 100M online users each hold a persistent WebSocket to one of ~3,000 chat servers. A message from user A on server 1 to user B on server 3 must be routed without a central coordinator. Weak answer: Redis Pub/Sub. Strong answer: Redis Pub/Sub + per-user server affinity. Server affinity map: user_id → server_id stored in Redis hash (HSET). On connect: update map. On message send: look up recipient's server, publish to that server's channel. If recipient is offline: write to Cassandra Inbox directly
+>
+> [!TIP]
+> **🟢 Staff+** — to name: what happens if the server holding a user's connection goes down? Client reconnects within 5 seconds (exponential backoff). Server affinity map is updated on reconnect. In-flight messages to the old server that weren't delivered: the Inbox ensures they're eventually delivered — real-time delivery is best-effort, durability is guaranteed by Cassandra. Never lose a message even when the delivery path fails
 
-Deep dive 2: Message delivery guarantees — at-least-once with ack protocol
-WhatsApp's delivery promise: messages are never lost. Weak answer: write to DB, deliver, done. Strong answer: explicit ack protocol. When A sends a message: (1) server writes to Cassandra Inbox for B, (2) server attempts real-time delivery via WebSocket, (3) server returns delivery confirmation to A. B's client acks receipt: (4) client receives message, (5) sends ack to its chat server, (6) server marks Inbox entry as delivered, (7) server relays ack to A (double-checkmark). Read receipt: B opens the conversation, client sends read event, server relays to A (blue checkmark). Staff+ design: ack messages are small (just message_id + status) and can be batched. If B goes offline mid-conversation, Inbox stores pending messages. On reconnect: server queries Inbox WHERE user_id = B AND delivered = false, sends all pending, waits for acks before marking delivered. Message ordering: Cassandra clustering key on (conversation_id, created_at, message_id) gives total order within a conversation.
 
-Deep dive 3: Group chats — fan-out and multi-device delivery
-Weak answer: fan out one-by-one to all group members on every message. Naive approach: 1,000 individual deliveries per message. At 10 messages/min in an active group: 10,000 deliveries/min for one group. Staff+ design: group chat server affinity — hash(group_id) to a dedicated set of chat servers. All group members' connections are preferentially routed to these servers. Fan-out from one message: server looks up group members, identifies which are connected to itself (direct push), which are on other servers in the affinity set (local pub/sub channel), which are offline (Cassandra Inbox). This reduces the fan-out from 1,000 individual cross-server calls to a broadcast within a small server cluster. Multi-device: Inbox is per-device, not per-user. Each device has its own Inbox entry and acks independently. Message is marked fully delivered only when all active devices have acked.
+#### Deep dive 2: Message delivery guarantees — at-least-once with ack protocol
+_WhatsApp's delivery promise: messages are never lost_
 
-Why the deep dives connect to the scaling problem: "Huge connection scale, routing, durable messaging, and group fan-out." Each deep dive addresses one layer.
+> [!CAUTION]
+> **🔴 Weak** — write to DB, deliver, done
+>
+> [!WARNING]
+> **🟡 Strong** — explicit ack protocol. When A sends a message: (1) server writes to Cassandra Inbox for B, (2) server attempts real-time delivery via WebSocket, (3) server returns delivery confirmation to A. B's client acks receipt: (4) client receives message, (5) sends ack to its chat server, (6) server marks Inbox entry as delivered, (7) server relays ack to A (double-checkmark). Read receipt: B opens the conversation, client sends read event, server relays to A (blue checkmark)
+>
+> [!TIP]
+> **🟢 Staff+** — design: ack messages are small (just message_id + status) and can be batched. If B goes offline mid-conversation, Inbox stores pending messages. On reconnect: server queries Inbox WHERE user_id = B AND delivered = false, sends all pending, waits for acks before marking delivered. Message ordering: Cassandra clustering key on (conversation_id, created_at, message_id) gives total order within a conversation
+
+
+#### Deep dive 3: Group chats — fan-out and multi-device delivery
+> [!CAUTION]
+> **🔴 Weak** — fan out one-by-one to all group members on every message. Naive approach: 1,000 individual deliveries per message. At 10 messages/min in an active group: 10,000 deliveries/min for one group
+>
+> [!WARNING]
+> **🟡 Strong** — Weak answer: fan out one-by-one to all group members on every message. Naive approach: 1,000 individual deliveries per message. At 10 messages/min in an active group: 10,000 deliveries/min for one group
+>
+> [!TIP]
+> **🟢 Staff+** — design: group chat server affinity — hash(group_id) to a dedicated set of chat servers. All group members' connections are preferentially routed to these servers. Fan-out from one message: server looks up group members, identifies which are connected to itself (direct push), which are on other servers in the affinity set (local pub/sub channel), which are offline (Cassandra Inbox). This reduces the fan-out from 1,000 individual cross-server calls to a broadcast within a small server cluster. Multi-device: Inbox is per-device, not per-user. Each device has its own Inbox entry and acks independently. Message is marked fully delivered only when all active devices have acked
+
+
+_Why the deep dives connect to the scaling problem: "Huge connection scale, routing, durable messaging, and group fan-out." Each deep dive addresses one layer._
 
 </details>
 

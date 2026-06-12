@@ -262,16 +262,42 @@ A third issue is skew. Most posts are quiet, but a few become very hot, so one p
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Fan-out architecture — the push/pull/hybrid decision
-Weak answer: always fan-out on write — pre-compute every follower's feed on every post. Strong answer: the core hard problem is fan-out: one post potentially needs to update millions of feeds. Weak answer: always fan-out on write. Strong answer: articulate the full tradeoff space. Fan-out on write: fast reads (pre-computed), expensive writes (proportional to follower count). Fan-out on read: cheap writes, expensive reads (O(followed_users) per feed request). Hybrid: fan-out on write for normal users, pull on read for celebrities above a threshold. Staff+ detail: the threshold is a configuration value, not a code decision — it should be tunable based on observed fan-out worker lag. The math: if a fan-out worker processes 10K writes/second and delivery SLA is 5 minutes, the maximum safe follower count for push fan-out is 10K × 300 = 3M. Any account above that threshold uses pull. At read time: fetch user's pre-built feed from Redis, also fetch the last N posts from each celebrity they follow from Cassandra, merge and sort. The merge is O(C × log C) where C is the number of celebrity accounts — typically small, so fast.
+#### Deep dive 1: Fan-out architecture — the push/pull/hybrid decision
+> [!CAUTION]
+> **🔴 Weak** — always fan-out on write — pre-compute every follower's feed on every post
+>
+> [!WARNING]
+> **🟡 Strong** — the core hard problem is fan-out: one post potentially needs to update millions of feeds. Weak answer: always fan-out on write. Strong answer: articulate the full tradeoff space. Fan-out on write: fast reads (pre-computed), expensive writes (proportional to follower count). Fan-out on read: cheap writes, expensive reads (O(followed_users) per feed request). Hybrid: fan-out on write for normal users, pull on read for celebrities above a threshold
+>
+> [!TIP]
+> **🟢 Staff+** — the threshold is a configuration value, not a code decision — it should be tunable based on observed fan-out worker lag. The math: if a fan-out worker processes 10K writes/second and delivery SLA is 5 minutes, the maximum safe follower count for push fan-out is 10K × 300 = 3M. Any account above that threshold uses pull. At read time: fetch user's pre-built feed from Redis, also fetch the last N posts from each celebrity they follow from Cassandra, merge and sort. The merge is O(C × log C) where C is the number of celebrity accounts — typically small, so fast
 
-Deep dive 2: Feed storage and retrieval — Redis sorted sets at petabyte scale
-Weak answer: query Cassandra directly on every feed read — join followed users' posts and sort. Strong answer: each user has a Redis sorted set keyed by user_id with post_ids as members and publish_timestamp as score. ZREVRANGE returns the feed in reverse-chronological order in O(log N + K) time. Staff+ concerns: (1) memory: 3B users × 1,000 post IDs × 8 bytes = 24 TB of Redis storage — requires a large Redis cluster with sharding by user_id. Cost is significant — only store the most recent 1,000 posts per user (ZREMRANGEBYRANK after every ZADD to trim). (2) Hot keys: users followed by millions of other users have their post IDs written to millions of sorted sets concurrently — this is the fan-out bottleneck, not the sorted set read. (3) Cold users: users who haven't logged in for 30 days don't need a live Redis feed — evict cold feed entries, rebuild from Cassandra on next login.
 
-Deep dive 3: ML ranking — candidate retrieval vs. scoring separation
-In production, chronological feed is deprecated in favor of ML-ranked feed. Staff+ answer: this is a two-stage architecture. Stage 1 (retrieval): pull top-N candidates from Redis sorted set — fast, based on recency signal only. Stage 2 (ranking): pass candidates to a separate ranking service that scores each post using features (engagement rate, relationship strength, content type, recency, user interest signals). Serves top-K ranked results. These two stages are explicitly separate services with separate scaling characteristics: retrieval is read-heavy and latency-critical, ranking is compute-heavy and can tolerate 50-100ms. Staff+ architectural point: never embed ML ranking logic in the feed service — they change at different cadences, are owned by different teams, and have different failure modes. The interface is clean: retrieval service returns candidates, ranking service returns scores.
+#### Deep dive 2: Feed storage and retrieval — Redis sorted sets at petabyte scale
+> [!CAUTION]
+> **🔴 Weak** — query Cassandra directly on every feed read — join followed users' posts and sort
+>
+> [!WARNING]
+> **🟡 Strong** — each user has a Redis sorted set keyed by user_id with post_ids as members and publish_timestamp as score. ZREVRANGE returns the feed in reverse-chronological order in O(log N + K) time
+>
+> [!TIP]
+> **🟢 Staff+** — concerns: (1) memory: 3B users × 1,000 post IDs × 8 bytes = 24 TB of Redis storage — requires a large Redis cluster with sharding by user_id. Cost is significant — only store the most recent 1,000 posts per user (ZREMRANGEBYRANK after every ZADD to trim). (2) Hot keys: users followed by millions of other users have their post IDs written to millions of sorted sets concurrently — this is the fan-out bottleneck, not the sorted set read. (3) Cold users: users who haven't logged in for 30 days don't need a live Redis feed — evict cold feed entries, rebuild from Cassandra on next login
 
-Why the deep dives connect to the scaling problem: "Massive fan-out and hot keys." Deep dive 1 solves fan-out architecture. Deep dive 2 solves storage and retrieval. Deep dive 3 solves the product quality layer on top.
+
+#### Deep dive 3: ML ranking — candidate retrieval vs. scoring separation
+_In production, chronological feed is deprecated in favor of ML-ranked feed_
+
+> [!CAUTION]
+> **🔴 Weak** — Query the database on every feed request.
+>
+> [!WARNING]
+> **🟡 Strong** — In production, chronological feed is deprecated in favor of ML-ranked feed
+>
+> [!TIP]
+> **🟢 Staff+** — this is a two-stage architecture. Stage 1 (retrieval): pull top-N candidates from Redis sorted set — fast, based on recency signal only. Stage 2 (ranking): pass candidates to a separate ranking service that scores each post using features (engagement rate, relationship strength, content type, recency, user interest signals). Serves top-K ranked results. These two stages are explicitly separate services with separate scaling characteristics: retrieval is read-heavy and latency-critical, ranking is compute-heavy and can tolerate 50-100ms. Staff+ architectural point: never embed ML ranking logic in the feed service — they change at different cadences, are owned by different teams, and have different failure modes. The interface is clean: retrieval service returns candidates, ranking service returns scores
+
+
+_Why the deep dives connect to the scaling problem: "Massive fan-out and hot keys." Deep dive 1 solves fan-out architecture. Deep dive 2 solves storage and retrieval. Deep dive 3 solves the product quality layer on top._
 
 </details>
 

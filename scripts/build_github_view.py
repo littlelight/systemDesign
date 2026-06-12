@@ -14,8 +14,12 @@ from __future__ import annotations
 import html
 import json
 import re
+import sys
 import textwrap
 from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from staff_ladder import format_q5_markdown  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 V15_HTML = ROOT / "cheatSheet" / "system_design_cheatsheet_v14.html"
@@ -433,7 +437,7 @@ def render_v15_markdown(s: dict) -> str:
         lines.append(details("Tradeoffs", body + "\n"))
 
     if s["q5"]:
-        lines.append(details("Deep dives", md_block(s["q5"])))
+        lines.append(details("Deep dives", format_q5_markdown(s["q5"])))
 
     if s["q6"]:
         body = ""

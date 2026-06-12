@@ -77,17 +77,56 @@ KV store scales by adding nodes to the ring. Pain points: hot keys, quorum laten
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Consistent hashing and virtual nodes
-Without vnodes, ring imbalance 3×. 150 vnodes per physical node smooths distribution. Node add/remove remaps only adjacent key ranges.
+#### Deep dive 1: Consistent hashing and virtual nodes
+_Without vnodes, ring imbalance 3×. 150 vnodes per physical node smooths distribution. Node add/remove remaps only adjacent key ranges_
 
-Deep dive 2: Quorum math
-N=3, W=2, R=2 → R+W>N guarantees read sees latest write. W=1, R=1 fastest but stale reads possible. Tune per use case.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify consistent hashing and virtual nodes — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Without vnodes, ring imbalance 3×. 150 vnodes per physical node smooths distribution. Node add/remove remaps only adjacent key ranges
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
-Deep dive 3: Failure handling — hinted handoff and Merkle trees
-Node down: write to alternative node with hint. On recovery, hand off data. Background Merkle tree comparison finds drift.
 
-Deep dive 4: Conflict resolution
-Concurrent puts create sibling versions. Client reads all siblings, merges (e.g., cart union), writes resolved version.
+#### Deep dive 2: Quorum math
+_N=3, W=2, R=2 → R+W>N guarantees read sees latest write. W=1, R=1 fastest but stale reads possible. Tune per use case_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify quorum math — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — N=3, W=2, R=2 → R+W>N guarantees read sees latest write. W=1, R=1 fastest but stale reads possible. Tune per use case
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Failure handling — hinted handoff and Merkle trees
+_Node down: write to alternative node with hint. On recovery, hand off data. Background Merkle tree comparison finds drift_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify failure handling — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Node down: write to alternative node with hint. On recovery, hand off data. Background Merkle tree comparison finds drift
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Conflict resolution
+_Concurrent puts create sibling versions. Client reads all siblings, merges (e.g., cart union), writes resolved version_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify conflict resolution — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Concurrent puts create sibling versions. Client reads all siblings, merges (e.g., cart union), writes resolved version
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

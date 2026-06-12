@@ -264,16 +264,44 @@ A good interview summary is this. Yelp is hard because it combines read-heavy tr
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Geospatial + text search — Elasticsearch as the single query surface
-Weak answer: run separate queries for geo (PostGIS) and text (LIKE), merge results in the app layer. Strong answer: the scaling pain is that a user query like "best sushi near me open now" combines full-text search, geo filtering, category filtering, and rating sorting in one request. Weak answer: separate queries to separate services, merge in app layer. Strong answer: Elasticsearch as a single query surface with a compound query: geo_distance filter (within X km of lat/lng) + multi_match on business name/category/description + term filter on category + range filter on rating + sort. Staff+ detail: the ES query shape matters for performance. Structured fields (category, rating, hours) should use filter context (cached, no scoring overhead) and text fields should use query context (scored, more expensive). The geo_distance filter is the most selective first — apply it first to reduce the candidate set before text scoring. For "open now": this is a computed field that changes every minute — too dynamic to index. Apply as a post-query filter in app layer, not in ES. Cache "is_open" status per business with 15-minute TTL.
+#### Deep dive 1: Geospatial + text search — Elasticsearch as the single query surface
+> [!CAUTION]
+> **🔴 Weak** — run separate queries for geo (PostGIS) and text (LIKE), merge results in the app layer
+>
+> [!WARNING]
+> **🟡 Strong** — the scaling pain is that a user query like "best sushi near me open now" combines full-text search, geo filtering, category filtering, and rating sorting in one request. Weak answer: separate queries to separate services, merge in app layer. Strong answer: Elasticsearch as a single query surface with a compound query: geo_distance filter (within X km of lat/lng) + multi_match on business name/category/description + term filter on category + range filter on rating + sort
+>
+> [!TIP]
+> **🟢 Staff+** — the ES query shape matters for performance. Structured fields (category, rating, hours) should use filter context (cached, no scoring overhead) and text fields should use query context (scored, more expensive). The geo_distance filter is the most selective first — apply it first to reduce the candidate set before text scoring. For "open now": this is a computed field that changes every minute — too dynamic to index. Apply as a post-query filter in app layer, not in ES. Cache "is_open" status per business with 15-minute TTL
 
-Deep dive 2: Keeping ES in sync with PostgreSQL — CDC and eventual consistency
-ES is derived data — PostgreSQL is the source of truth. Sync strategy options: (1) dual write (write to PG + ES in same request) — simple but PG and ES can diverge on partial failure; (2) CDC (Debezium reads PG WAL → Kafka → ES indexer) — eventual consistency, reliable, standard production approach; (3) async event-driven (after PG write succeeds, publish Kafka event → ES indexer) — same reliability as CDC but more explicit. Staff+ answer: CDC is the production default because it works for all write patterns (including bulk imports, migrations, and direct DB writes by other services) without requiring every writer to know about ES. Lag: typically 1-5 seconds — acceptable for search. Monitor lag metric: alert at >60s. For new business data (most time-sensitive): reduce batch size in the indexer for faster propagation.
 
-Deep dive 3: Rating aggregation — precomputed running average
-The access pattern for ratings: millions of reads per business page, one write per new review. Recomputing avg(rating) from all reviews on every page view is O(N) per request at 11,600 QPS — impossible. Weak answer: cache the result. Strong answer: maintain a running average in the database: (sum_of_ratings, review_count) per business. On new review: UPDATE businesses SET sum_of_ratings = sum_of_ratings + ?, review_count = review_count + 1 WHERE id = ?. Average = sum/count, computed at read time (O(1)). Staff+ concern: concurrent reviews on a popular business can create a write hotspot on the businesses row. Mitigation: use PG row-level locking for the increment (short lock duration), or batch review aggregation (flush accumulated ratings every 30s from Redis). In ES: rating field updated via the same CDC pipeline — search results always reflect recent ratings.
+#### Deep dive 2: Keeping ES in sync with PostgreSQL — CDC and eventual consistency
+_ES is derived data — PostgreSQL is the source of truth. Sync strategy options: (1) dual write (write to PG + ES in same request) — simple but PG and ES can diverge on partial failure; (2) CDC (Debezium reads PG WAL → Kafka → ES indexer) — eventual consistency, reliable, standard production approach; (3) async event-driven (after PG write succeeds, publish Kafka event → ES indexer) — same reliability as CDC but more explicit_
 
-Why the deep dives connect to the scaling problem: "Multi-dimensional search plus precomputed read data." Each deep dive solves one dimension of the read scaling problem.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify keeping es in sync with postgresql — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — ES is derived data — PostgreSQL is the source of truth. Sync strategy options: (1) dual write (write to PG + ES in same request) — simple but PG and ES can diverge on partial failure; (2) CDC (Debezium reads PG WAL → Kafka → ES indexer) — eventual consistency, reliable, standard production approach; (3) async event-driven (after PG write succeeds, publish Kafka event → ES indexer) — same reliability as CDC but more explicit
+>
+> [!TIP]
+> **🟢 Staff+** — CDC is the production default because it works for all write patterns (including bulk imports, migrations, and direct DB writes by other services) without requiring every writer to know about ES. Lag: typically 1-5 seconds — acceptable for search. Monitor lag metric: alert at >60s. For new business data (most time-sensitive): reduce batch size in the indexer for faster propagation
+
+
+#### Deep dive 3: Rating aggregation — precomputed running average
+_The access pattern for ratings: millions of reads per business page, one write per new review. Recomputing avg(rating) from all reviews on every page view is O(N) per request at 11,600 QPS — impossible_
+
+> [!CAUTION]
+> **🔴 Weak** — cache the result
+>
+> [!WARNING]
+> **🟡 Strong** — maintain a running average in the database: (sum_of_ratings, review_count) per business. On new review: UPDATE businesses SET sum_of_ratings = sum_of_ratings + ?, review_count = review_count + 1 WHERE id = ?. Average = sum/count, computed at read time (O(1))
+>
+> [!TIP]
+> **🟢 Staff+** — concurrent reviews on a popular business can create a write hotspot on the businesses row. Mitigation: use PG row-level locking for the increment (short lock duration), or batch review aggregation (flush accumulated ratings every 30s from Redis). In ES: rating field updated via the same CDC pipeline — search results always reflect recent ratings
+
+
+_Why the deep dives connect to the scaling problem: "Multi-dimensional search plus precomputed read data." Each deep dive solves one dimension of the read scaling problem._
 
 </details>
 

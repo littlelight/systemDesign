@@ -199,17 +199,54 @@ Financial correctness and PCI boundaries matter more than raw QPS.
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Tokenization and HSM
-Weak: encrypt PAN in DB. Strong: HSM generates tokens; PAN never leaves secure enclave.
+#### Deep dive 1: Tokenization and HSM
+> [!CAUTION]
+> **🔴 Weak** — encrypt PAN in DB
+>
+> [!WARNING]
+> **🟡 Strong** — HSM generates tokens; PAN never leaves secure enclave
+>
+> [!TIP]
+> **🟢 Staff+** — Name the metric you'd alert on and when you'd revisit this design.
 
-Deep dive 2: Ledger correctness
-Append-only events. Daily balance invariant check. No in-place balance updates.
 
-Deep dive 3: Fraud
-Velocity limits, device fingerprint, ML risk score. Step-up 3DS above threshold.
+#### Deep dive 2: Ledger correctness
+_Append-only events. Daily balance invariant check. No in-place balance updates_
 
-Deep dive 4: Offline tap
-Stored cryptogram on secure element. Limited offline spend counter.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify ledger correctness — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Append-only events. Daily balance invariant check. No in-place balance updates
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Fraud
+_Velocity limits, device fingerprint, ML risk score. Step-up 3DS above threshold_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify fraud — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Velocity limits, device fingerprint, ML risk score. Step-up 3DS above threshold
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Offline tap
+_Stored cryptogram on secure element. Limited offline spend counter_
+
+> [!CAUTION]
+> **🔴 Weak** — One global INCR key for all traffic.
+>
+> [!WARNING]
+> **🟡 Strong** — Stored cryptogram on secure element. Limited offline spend counter
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

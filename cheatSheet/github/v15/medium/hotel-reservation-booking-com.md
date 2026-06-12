@@ -201,17 +201,56 @@ Hotel reservation is a correctness problem. Contention spikes on popular dates; 
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Double-booking prevention
-Transaction: SELECT reserved FROM inventory WHERE hotel=X AND date=Y FOR UPDATE. Check available>0. UPDATE reserved++. INSERT reservation. COMMIT. Second transaction blocks until first completes — sees updated count.
+#### Deep dive 1: Double-booking prevention
+_Transaction: SELECT reserved FROM inventory WHERE hotel=X AND date=Y FOR UPDATE. Check available>0. UPDATE reserved++. INSERT reservation. COMMIT. Second transaction blocks until first completes — sees updated count_
 
-Deep dive 2: Hold window without long locks
-Lock held only for transaction duration (~50ms). PENDING_PAYMENT row holds inventory. Expiry job releases after 10 min. Payment at T+9:59 still valid if timestamp authoritative.
+> [!CAUTION]
+> **🔴 Weak** — UPDATE balance in SQL — no locking story.
+>
+> [!WARNING]
+> **🟡 Strong** — Transaction: SELECT reserved FROM inventory WHERE hotel=X AND date=Y FOR UPDATE. Check available>0. UPDATE reserved++. INSERT reservation. COMMIT. Second transaction blocks until first completes — sees updated count
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
-Deep dive 3: Search at scale without touching OLTP
-Elasticsearch for hotel metadata/ranking. Redis for availability counts updated on booking. Search never acquires row locks.
 
-Deep dive 4: Saga compensation
-Pay fails → cancel reservation → decrement reserved. Idempotent compensation keyed by reservation_id.
+#### Deep dive 2: Hold window without long locks
+_Lock held only for transaction duration (~50ms). PENDING_PAYMENT row holds inventory. Expiry job releases after 10 min. Payment at T+9:59 still valid if timestamp authoritative_
+
+> [!CAUTION]
+> **🔴 Weak** — Retry the charge on any timeout.
+>
+> [!WARNING]
+> **🟡 Strong** — Lock held only for transaction duration (~50ms). PENDING_PAYMENT row holds inventory. Expiry job releases after 10 min. Payment at T+9:59 still valid if timestamp authoritative
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Search at scale without touching OLTP
+_Elasticsearch for hotel metadata/ranking. Redis for availability counts updated on booking. Search never acquires row locks_
+
+> [!CAUTION]
+> **🔴 Weak** — SELECT * WHERE column LIKE '%query%'.
+>
+> [!WARNING]
+> **🟡 Strong** — Elasticsearch for hotel metadata/ranking. Redis for availability counts updated on booking. Search never acquires row locks
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Saga compensation
+_Pay fails → cancel reservation → decrement reserved. Idempotent compensation keyed by reservation_id_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify saga compensation — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Pay fails → cancel reservation → decrement reserved. Idempotent compensation keyed by reservation_id
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

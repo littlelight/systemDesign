@@ -279,16 +279,42 @@ A good mental model is this. Tinder is hard because it combines search, real-tim
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Recommendation stack — low-latency candidate generation
-Weak answer: run GEORADIUS + preference filter on every swipe in real-time. Strong answer: the scaling pain is that feed generation mixes geospatial search, preference filtering, and swipe history deduplication into one pipeline that must complete in under a second. Weak answer: GEORADIUS + filter in one query. Strong answer: pre-compute candidate decks asynchronously — GEORADIUS query + preference filter runs in background, results cached per user. When user opens the app, deck is ready instantly. Staff+ detail: the deck has a TTL (location changes, preferences update). Rather than a fixed TTL, invalidate the deck reactively: location update event → deck invalidation → async re-generation. Stack depth monitoring: when user swipes through to the last 10 profiles in their deck, trigger an async deck refresh before they run out. Candidate scoring: after GEORADIUS + preference filter, score remaining candidates using ML model (predicted swipe probability based on historical data) and serve the highest-scoring profiles first.
+#### Deep dive 1: Recommendation stack — low-latency candidate generation
+> [!CAUTION]
+> **🔴 Weak** — run GEORADIUS + preference filter on every swipe in real-time
+>
+> [!WARNING]
+> **🟡 Strong** — the scaling pain is that feed generation mixes geospatial search, preference filtering, and swipe history deduplication into one pipeline that must complete in under a second. Weak answer: GEORADIUS + filter in one query. Strong answer: pre-compute candidate decks asynchronously — GEORADIUS query + preference filter runs in background, results cached per user. When user opens the app, deck is ready instantly
+>
+> [!TIP]
+> **🟢 Staff+** — the deck has a TTL (location changes, preferences update). Rather than a fixed TTL, invalidate the deck reactively: location update event → deck invalidation → async re-generation. Stack depth monitoring: when user swipes through to the last 10 profiles in their deck, trigger an async deck refresh before they run out. Candidate scoring: after GEORADIUS + preference filter, score remaining candidates using ML model (predicted swipe probability based on historical data) and serve the highest-scoring profiles first
 
-Deep dive 2: Swipe storage and match detection — correctness under concurrent writes
-58,000 swipe writes/second to Cassandra with one correctness requirement: two simultaneous mutual likes must be detected exactly once. Weak answer: check Cassandra for mutual like. Strong answer: Redis SETNX on a derived key (min(a,b):max(a,b)) for atomic mutual check. If A likes B and B already liked A, the key exists → match. If A likes B and B hasn't liked yet, SETNX succeeds → key set for later. When B likes A, SETNX finds the key → match detected. Staff+ durability: Redis is not the source of truth. Cassandra stores all swipes durably. Redis is only for the real-time match detection signal. If Redis is down: fall back to Cassandra CAS (Compare-And-Swap using Lightweight Transactions) — slower but correct. Partition key for swipes: (user_id, created_at_bucket) — queries like "all swipes by user X" are efficient.
 
-Deep dive 3: Avoiding re-shows — Bloom filter for swipe history
-Weak answer: store all swipe history in Cassandra, check each candidate with a point query. Each user has accumulated swipe history that must be filtered from their deck. At 100 swipes/day × 2 years = 73,000 swipes per active user. Checking all 73K against candidate profiles is expensive. Staff+ solution: Bloom filter per user (probabilistic, O(1) check, ~10 bytes/entry at 1% false positive rate). 73K swipes × 10 bytes = 730 KB per user — stored in Redis. False positive means occasionally hiding an unseen profile (user never sees it) — this is acceptable, better than showing an already-swiped profile. Critical distinction: Bloom filter is for deck generation only. For match detection, exact Cassandra check is required — a false negative (missing a match) is unacceptable. Cuckoo filter as an upgrade: supports deletions (allowing swipe undo) at slightly higher memory cost.
+#### Deep dive 2: Swipe storage and match detection — correctness under concurrent writes
+_58,000 swipe writes/second to Cassandra with one correctness requirement: two simultaneous mutual likes must be detected exactly once_
 
-Why the deep dives connect to the scaling problem: "Fast read, correctness, and deduplication in one loop." Deep dives address each dimension of that loop.
+> [!CAUTION]
+> **🔴 Weak** — check Cassandra for mutual like
+>
+> [!WARNING]
+> **🟡 Strong** — Redis SETNX on a derived key (min(a,b):max(a,b)) for atomic mutual check. If A likes B and B already liked A, the key exists → match. If A likes B and B hasn't liked yet, SETNX succeeds → key set for later. When B likes A, SETNX finds the key → match detected
+>
+> [!TIP]
+> **🟢 Staff+** — durability: Redis is not the source of truth. Cassandra stores all swipes durably. Redis is only for the real-time match detection signal. If Redis is down: fall back to Cassandra CAS (Compare-And-Swap using Lightweight Transactions) — slower but correct. Partition key for swipes: (user_id, created_at_bucket) — queries like "all swipes by user X" are efficient
+
+
+#### Deep dive 3: Avoiding re-shows — Bloom filter for swipe history
+> [!CAUTION]
+> **🔴 Weak** — store all swipe history in Cassandra, check each candidate with a point query. Each user has accumulated swipe history that must be filtered from their deck. At 100 swipes/day × 2 years = 73,000 swipes per active user. Checking all 73K against candidate profiles is expensive
+>
+> [!WARNING]
+> **🟡 Strong** — Weak answer: store all swipe history in Cassandra, check each candidate with a point query. Each user has accumulated swipe history that must be filtered from their deck. At 100 swipes/day × 2 years = 73,000 swipes per active user. Checking all 73K against candidate profiles is expensive
+>
+> [!TIP]
+> **🟢 Staff+** — solution: Bloom filter per user (probabilistic, O(1) check, ~10 bytes/entry at 1% false positive rate). 73K swipes × 10 bytes = 730 KB per user — stored in Redis. False positive means occasionally hiding an unseen profile (user never sees it) — this is acceptable, better than showing an already-swiped profile. Critical distinction: Bloom filter is for deck generation only. For match detection, exact Cassandra check is required — a false negative (missing a match) is unacceptable. Cuckoo filter as an upgrade: supports deletions (allowing swipe undo) at slightly higher memory cost
+
+
+_Why the deep dives connect to the scaling problem: "Fast read, correctness, and deduplication in one loop." Deep dives address each dimension of that loop._
 
 </details>
 

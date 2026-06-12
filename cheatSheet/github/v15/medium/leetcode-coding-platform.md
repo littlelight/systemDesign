@@ -271,16 +271,46 @@ A good mental model is this. LeetCode is hard because it mixes a fairly simple c
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Secure code execution — isolation, resource limits, and the sandbox design
-The defining problem is safely running untrusted code. Weak answer: Docker containers. Strong answer: Docker with specific security configuration: (1) seccomp profile (restrict allowed syscalls to the minimum needed — block socket, fork beyond a count, exec of new binaries), (2) no network namespace (--network none), (3) read-only filesystem, (4) cgroups for CPU time limit and memory limit, (5) OOM kill at container level. Staff+ comparison: VMs give stronger isolation (separate kernel) at the cost of 5-10s startup vs. Docker's <100ms. Firecracker microVMs (used by AWS Lambda) give VM-level isolation at near-container startup speed — the best security/performance tradeoff. For a real coding judge: Docker + seccomp is the standard production answer. Name what your seccomp profile blocks explicitly: socket syscalls (no network), fork/clone beyond the PID limit (no fork bombs), mount syscalls (no filesystem escapes).
+#### Deep dive 1: Secure code execution — isolation, resource limits, and the sandbox design
+_The defining problem is safely running untrusted code_
 
-Deep dive 2: Handling submission spikes — contest traffic at 5,000 QPS
-Contest submissions: 100K users × 5 submissions in 2 hours = 250K total. In the first 10 minutes of a contest, most submissions happen → spike to 5,000 QPS. Weak answer: scale workers. Strong answer: SQS queue decouples submission acceptance from execution. API accepts submission immediately (synchronous, <10ms), enqueues job, returns submission ID. Client polls GET /submissions/:id. Queue depth × avg execution time / worker count = queue latency. At 5,000 QPS with 10s avg execution and 200 workers: 5,000 × 10 / 200 = 250 second latency at peak. Fix: pre-scale workers before contest start (predictable traffic pattern). Worker autoscaling metric: SQS queue depth, not CPU. Staff+ detail: separate worker pools by language (Python workers, C++ workers) because Python submissions take 5-10× longer than C++ — mixed queue starves C++ users. Per-language queue with proportional worker allocation.
+> [!CAUTION]
+> **🔴 Weak** — Docker containers
+>
+> [!WARNING]
+> **🟡 Strong** — Docker with specific security configuration: (1) seccomp profile (restrict allowed syscalls to the minimum needed — block socket, fork beyond a count, exec of new binaries), (2) no network namespace (--network none), (3) read-only filesystem, (4) cgroups for CPU time limit and memory limit, (5) OOM kill at container level
+>
+> [!TIP]
+> **🟢 Staff+** — VMs give stronger isolation (separate kernel) at the cost of 5-10s startup vs. Docker's <100ms. Firecracker microVMs (used by AWS Lambda) give VM-level isolation at near-container startup speed — the best security/performance tradeoff. For a real coding judge: Docker + seccomp is the standard production answer. Name what your seccomp profile blocks explicitly: socket syscalls (no network), fork/clone beyond the PID limit (no fork bombs), mount syscalls (no filesystem escapes)
 
-Deep dive 3: Leaderboard at real-time scale — Redis sorted sets under contest stress
-During a contest, 100K users polling leaderboard every 10 seconds = 10K QPS on one sorted set (the leaderboard is a single ZREVRANGE key). Weak answer: cache the leaderboard. Strong answer: tiered caching — Redis sorted set is the live source, but serve reads from a snapshot cached with 5-second TTL in each app server's local process cache. Push leaderboard updates via SSE to subscribed users rather than polling (eliminates 90% of reads). Staff+ detail: the leaderboard sorted set is a hot key — all reads go to one Redis shard. For a contest with 100K participants this is manageable; for a global contest with 1M: shard the leaderboard by rank range (top 100 is served from one shard, ranks 100-1000 from another) and merge at the API layer. Alternatively: serve approximate leaderboards (top 10% exact, rest approximate from a lower-frequency snapshot) — users care most about top positions.
 
-Why the deep dives connect to the scaling problem: "Safe execution farm plus contest traffic spikes." Each deep dive addresses one dimension.
+#### Deep dive 2: Handling submission spikes — contest traffic at 5,000 QPS
+_Contest submissions: 100K users × 5 submissions in 2 hours = 250K total. In the first 10 minutes of a contest, most submissions happen → spike to 5,000 QPS_
+
+> [!CAUTION]
+> **🔴 Weak** — scale workers
+>
+> [!WARNING]
+> **🟡 Strong** — SQS queue decouples submission acceptance from execution. API accepts submission immediately (synchronous, <10ms), enqueues job, returns submission ID. Client polls GET /submissions/:id. Queue depth × avg execution time / worker count = queue latency. At 5,000 QPS with 10s avg execution and 200 workers: 5,000 × 10 / 200 = 250 second latency at peak. Fix: pre-scale workers before contest start (predictable traffic pattern). Worker autoscaling metric: SQS queue depth, not CPU
+>
+> [!TIP]
+> **🟢 Staff+** — separate worker pools by language (Python workers, C++ workers) because Python submissions take 5-10× longer than C++ — mixed queue starves C++ users. Per-language queue with proportional worker allocation
+
+
+#### Deep dive 3: Leaderboard at real-time scale — Redis sorted sets under contest stress
+_During a contest, 100K users polling leaderboard every 10 seconds = 10K QPS on one sorted set (the leaderboard is a single ZREVRANGE key)_
+
+> [!CAUTION]
+> **🔴 Weak** — cache the leaderboard
+>
+> [!WARNING]
+> **🟡 Strong** — tiered caching — Redis sorted set is the live source, but serve reads from a snapshot cached with 5-second TTL in each app server's local process cache. Push leaderboard updates via SSE to subscribed users rather than polling (eliminates 90% of reads)
+>
+> [!TIP]
+> **🟢 Staff+** — the leaderboard sorted set is a hot key — all reads go to one Redis shard. For a contest with 100K participants this is manageable; for a global contest with 1M: shard the leaderboard by rank range (top 100 is served from one shard, ranks 100-1000 from another) and merge at the API layer. Alternatively: serve approximate leaderboards (top 10% exact, rest approximate from a lower-frequency snapshot) — users care most about top positions
+
+
+_Why the deep dives connect to the scaling problem: "Safe execution farm plus contest traffic spikes." Each deep dive addresses one dimension._
 
 </details>
 

@@ -201,17 +201,56 @@ Kafka scales by adding partitions and brokers. Limits: partition count planning,
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Partition key design
-Wrong key (constant) → one hot partition. Right key (user_id, order_id) spreads load and preserves per-entity order.
+#### Deep dive 1: Partition key design
+_Wrong key (constant) → one hot partition. Right key (user_id, order_id) spreads load and preserves per-entity order_
 
-Deep dive 2: Consumer groups and rebalancing
-Adding consumer triggers rebalance — brief pause. Use cooperative sticky assignor to minimize disruption. Max consumers = partitions.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify partition key design — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Wrong key (constant) → one hot partition. Right key (user_id, order_id) spreads load and preserves per-entity order
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
-Deep dive 3: Replication and ISR
-min.insync.replicas=2 with acks=all prevents data loss on broker failure. Unclean leader election trades availability for loss risk — avoid for financial topics.
 
-Deep dive 4: Handling poison pills
-After 3 failures route to DLQ. Skip bad message so partition progresses. Alert on DLQ depth.
+#### Deep dive 2: Consumer groups and rebalancing
+_Adding consumer triggers rebalance — brief pause. Use cooperative sticky assignor to minimize disruption. Max consumers = partitions_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify consumer groups and rebalancing — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Adding consumer triggers rebalance — brief pause. Use cooperative sticky assignor to minimize disruption. Max consumers = partitions
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Replication and ISR
+_min.insync.replicas=2 with acks=all prevents data loss on broker failure. Unclean leader election trades availability for loss risk — avoid for financial topics_
+
+> [!CAUTION]
+> **🔴 Weak** — UUID v4 everywhere — collisions are negligible.
+>
+> [!WARNING]
+> **🟡 Strong** — min.insync.replicas=2 with acks=all prevents data loss on broker failure. Unclean leader election trades availability for loss risk — avoid for financial topics
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Handling poison pills
+_After 3 failures route to DLQ. Skip bad message so partition progresses. Alert on DLQ depth_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify handling poison pills — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — After 3 failures route to DLQ. Skip bad message so partition progresses. Alert on DLQ depth
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

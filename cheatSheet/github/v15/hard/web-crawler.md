@@ -294,16 +294,40 @@ A good interview summary is this. Web Crawler is hard because it combines massiv
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: URL frontier — priority queue, politeness, and domain assignment
-Weak answer: a single queue of URLs to crawl in BFS order — simple and correct for small scale. Strong answer: two-tier priority frontier. Back queues: one per domain, enforces politeness (one request per domain per N seconds, respects robots.txt Crawl-delay). Front queue: priority-ordered list of (domain, priority) pairs. The scheduler picks the highest-priority domain whose next_allowed_crawl_time ≤ now. This ensures politeness and value-maximization simultaneously. Staff+ crawl ordering: priority = f(PageRank estimate, domain authority, freshness score). High-authority domains (CNN, Wikipedia) get crawled most frequently. Pages within a domain are prioritized by inbound link count. The priority function is configurable — it's the lever that determines what percentage of your crawl budget goes to fresh high-value content vs. long-tail pages.
+#### Deep dive 1: URL frontier — priority queue, politeness, and domain assignment
+> [!CAUTION]
+> **🔴 Weak** — a single queue of URLs to crawl in BFS order — simple and correct for small scale
+>
+> [!WARNING]
+> **🟡 Strong** — two-tier priority frontier. Back queues: one per domain, enforces politeness (one request per domain per N seconds, respects robots.txt Crawl-delay). Front queue: priority-ordered list of (domain, priority) pairs. The scheduler picks the highest-priority domain whose next_allowed_crawl_time ≤ now. This ensures politeness and value-maximization simultaneously
+>
+> [!TIP]
+> **🟢 Staff+** — priority = f(PageRank estimate, domain authority, freshness score). High-authority domains (CNN, Wikipedia) get crawled most frequently. Pages within a domain are prioritized by inbound link count. The priority function is configurable — it's the lever that determines what percentage of your crawl budget goes to fresh high-value content vs. long-tail pages
 
-Deep dive 2: URL deduplication — Bloom filter + Cassandra two-tier
-Weak answer: store all crawled URLs in a database, check before each fetch. At 96K new URL candidates/sec, 96K DB queries/sec for dedup alone — impossible. Strong answer: Bloom filter as a fast first-pass. At 5B URLs, 1% false positive rate: 9.6 GB memory, 7 hash functions, O(1) per check. False positive = occasionally skipping a valid URL — acceptable tradeoff. Cassandra exact check only for Bloom filter positives (~1% of checks). Staff+ operational concern: Bloom filter fills up. Monitor load factor — alert at 70% capacity, rotate to a new filter. During rotation: new URLs go to the new filter; old filter kept read-only for 30 days to catch duplicates of recently-crawled pages. Counting Bloom filter (supports deletions) if you need to remove URLs that have been re-crawled and should be treated as fresh.
 
-Deep dive 3: Content deduplication and relevance scoring — SimHash and PageRank
-Weak answer: detect exact duplicates using SHA-256 of page content. Misses near-duplicates — the same article republished on 50 domains with minor wording differences all get indexed, wasting storage and diluting search quality. Strong answer: SimHash fingerprint. Process: tokenize → tf-idf weighted term vector → hash each term with a random 64-bit weight vector → sum → take sign of each bit. Result: 64-bit fingerprint where similar documents have high Hamming similarity. Hamming distance < 3 = near-duplicate. Staff+ lookup efficiency: comparing a new fingerprint against all 5B stored fingerprints is O(N). Solution: partition fingerprints into bands (groups of bits) and only compare fingerprints in the same band — Locality Sensitive Hashing. Reduces lookup from O(N) to O(1) average case. For 5B fingerprints × 8 bytes = 40 GB total — fits in a distributed Redis cluster for fast lookups.
+#### Deep dive 2: URL deduplication — Bloom filter + Cassandra two-tier
+> [!CAUTION]
+> **🔴 Weak** — store all crawled URLs in a database, check before each fetch. At 96K new URL candidates/sec, 96K DB queries/sec for dedup alone — impossible
+>
+> [!WARNING]
+> **🟡 Strong** — Bloom filter as a fast first-pass. At 5B URLs, 1% false positive rate: 9.6 GB memory, 7 hash functions, O(1) per check. False positive = occasionally skipping a valid URL — acceptable tradeoff. Cassandra exact check only for Bloom filter positives (~1% of checks)
+>
+> [!TIP]
+> **🟢 Staff+** — operational concern: Bloom filter fills up. Monitor load factor — alert at 70% capacity, rotate to a new filter. During rotation: new URLs go to the new filter; old filter kept read-only for 30 days to catch duplicates of recently-crawled pages. Counting Bloom filter (supports deletions) if you need to remove URLs that have been re-crawled and should be treated as fresh
 
-Why the deep dives connect to the scaling problem: "Massive frontier, external bottlenecks, duplicate avoidance, fault tolerance." Each deep dive addresses one constraint.
+
+#### Deep dive 3: Content deduplication and relevance scoring — SimHash and PageRank
+> [!CAUTION]
+> **🔴 Weak** — detect exact duplicates using SHA-256 of page content. Misses near-duplicates — the same article republished on 50 domains with minor wording differences all get indexed, wasting storage and diluting search quality
+>
+> [!WARNING]
+> **🟡 Strong** — SimHash fingerprint. Process: tokenize → tf-idf weighted term vector → hash each term with a random 64-bit weight vector → sum → take sign of each bit. Result: 64-bit fingerprint where similar documents have high Hamming similarity. Hamming distance < 3 = near-duplicate
+>
+> [!TIP]
+> **🟢 Staff+** — lookup efficiency: comparing a new fingerprint against all 5B stored fingerprints is O(N). Solution: partition fingerprints into bands (groups of bits) and only compare fingerprints in the same band — Locality Sensitive Hashing. Reduces lookup from O(N) to O(1) average case. For 5B fingerprints × 8 bytes = 40 GB total — fits in a distributed Redis cluster for fast lookups
+
+
+_Why the deep dives connect to the scaling problem: "Massive frontier, external bottlenecks, duplicate avoidance, fault tolerance." Each deep dive addresses one constraint._
 
 </details>
 

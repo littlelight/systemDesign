@@ -21,6 +21,7 @@ from build_github_view import (  # noqa: E402
     split_v15_systems,
     strip_html_tags,
 )
+from staff_ladder import LADDER_CSS, format_q5_html  # noqa: E402
 
 ROOT = Path(__file__).resolve().parent.parent
 SRC = ROOT / "cheatSheet" / "system_design_cheatsheet_v14.html"
@@ -247,6 +248,9 @@ def render_arch(arch_d: str, arch_t: str) -> str:
 def render_deep(text: str) -> str:
     if not text:
         return '<p style="color:var(--txt-ter)">Not available.</p>'
+    formatted = format_q5_html(text)
+    if formatted:
+        return formatted
     parts = []
     for p in re.split(r"\n\n|\\n\\n", text):
         p = p.strip()
@@ -386,7 +390,7 @@ html:not(.js-enabled) .js-only{display:none!important}
 .card-arch{padding:12px 14px;border-bottom:.5px solid var(--bdr-ter);background:var(--bg-sec)}
 .card-arch .ascii-wrap{margin-top:6px}
 .card-arch .ascii-desc{margin-top:8px;font-size:12px;color:var(--txt-sec);line-height:1.65}
-"""
+""" + LADDER_CSS
     text = text.replace("</style>", gh_css + "\n</style>", 1)
 
     noscript = """

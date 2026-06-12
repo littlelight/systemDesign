@@ -383,16 +383,40 @@ The extra wrinkle is post processing. One upload turns into a pipeline that spli
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Upload pipeline — TUS resumable protocol and parallel transcode
-Weak answer: standard HTTP multipart upload, transcode sequentially through all resolutions. A 10 GB upload that fails at 9.9 GB restarts from zero. Sequential transcode means 360p isn't available until 4K finishes — user waits minutes before their video is watchable. Strong answer: TUS resumable protocol. Client splits the file into 10 MB chunks, tracks each independently. On network failure: resume from the last acknowledged chunk. Parallel transcode: one Flink job per resolution running simultaneously on separate worker instances. 360p is available within seconds of upload completion; 4K follows asynchronously. Staff+ failure mode: transcode job fails for a specific resolution. Store transcode status per (video_id, resolution). Failed resolutions retry independently. Video is available at successful resolutions while others process. Never block video availability on full transcode completion — this is the difference between a 2-minute and a 20-minute time-to-publish.
+#### Deep dive 1: Upload pipeline — TUS resumable protocol and parallel transcode
+> [!CAUTION]
+> **🔴 Weak** — standard HTTP multipart upload, transcode sequentially through all resolutions. A 10 GB upload that fails at 9.9 GB restarts from zero. Sequential transcode means 360p isn't available until 4K finishes — user waits minutes before their video is watchable
+>
+> [!WARNING]
+> **🟡 Strong** — TUS resumable protocol. Client splits the file into 10 MB chunks, tracks each independently. On network failure: resume from the last acknowledged chunk. Parallel transcode: one Flink job per resolution running simultaneously on separate worker instances. 360p is available within seconds of upload completion; 4K follows asynchronously
+>
+> [!TIP]
+> **🟢 Staff+** — : transcode job fails for a specific resolution. Store transcode status per (video_id, resolution). Failed resolutions retry independently. Video is available at successful resolutions while others process. Never block video availability on full transcode completion — this is the difference between a 2-minute and a 20-minute time-to-publish
 
-Deep dive 2: Adaptive bitrate streaming — HLS manifest and quality switching
-Weak answer: serve one video quality to all users — high quality for everyone, or low quality to save bandwidth. Strong answer: HLS adaptive bitrate streaming. The master manifest (.m3u8) lists all quality variants with bandwidth requirements. Client downloads the master manifest, picks initial quality based on current bandwidth estimate, then switches dynamically per segment. Staff+ switching logic: switch up if measured bandwidth > 1.3× current bitrate AND buffer > 30 seconds; switch down if measured bandwidth < 0.8× current bitrate OR buffer drops below 10 seconds. This asymmetry (requires more headroom to switch up than to switch down) prevents oscillation — the player doesn't constantly flip between quality tiers on variable connections. Server-side: HLS segments stored in S3 with deterministic URL structure /{video_id}/{resolution}/{segment_number}.ts. The CDN pre-fetches upcoming segments during playback because the next segment URL is predictable.
 
-Deep dive 3: CDN architecture — cache warming, multi-CDN, and origin shielding
-Weak answer: put a CDN in front of S3 and set a long cache TTL. Strong answer: multi-layer CDN strategy. (1) Multi-CDN routing: two providers, DNS routes to the one with lower measured P95 latency for that region. Failover in seconds. (2) Origin shielding: instead of all CDN POPs fetching independently from S3 on a miss, a small set of shield POPs (10-20 globally) fetch from S3 and local POPs fetch from the shield. Reduces S3 request rate from O(POPs × misses) to O(shields × misses). Staff+ cache warming: for large channels, the CDN push API pre-populates segments at relevant POPs before the video goes live. No cold cache for the first million viewers of a major release. Purge strategy: deleted or copyright-struck videos need instant CDN purge across all POPs. Tag-based purge: all segments of a video_id are tagged at upload time, purged with a single API call on deletion.
+#### Deep dive 2: Adaptive bitrate streaming — HLS manifest and quality switching
+> [!CAUTION]
+> **🔴 Weak** — serve one video quality to all users — high quality for everyone, or low quality to save bandwidth
+>
+> [!WARNING]
+> **🟡 Strong** — HLS adaptive bitrate streaming. The master manifest (.m3u8) lists all quality variants with bandwidth requirements. Client downloads the master manifest, picks initial quality based on current bandwidth estimate, then switches dynamically per segment
+>
+> [!TIP]
+> **🟢 Staff+** — switching logic: switch up if measured bandwidth > 1.3× current bitrate AND buffer > 30 seconds; switch down if measured bandwidth < 0.8× current bitrate OR buffer drops below 10 seconds. This asymmetry (requires more headroom to switch up than to switch down) prevents oscillation — the player doesn't constantly flip between quality tiers on variable connections. Server-side: HLS segments stored in S3 with deterministic URL structure /{video_id}/{resolution}/{segment_number}.ts. The CDN pre-fetches upcoming segments during playback because the next segment URL is predictable
 
-Why the deep dives connect to the scaling problem: "Large blob uploads, expensive transcoding, massive read-heavy streaming." Each deep dive addresses one layer.
+
+#### Deep dive 3: CDN architecture — cache warming, multi-CDN, and origin shielding
+> [!CAUTION]
+> **🔴 Weak** — put a CDN in front of S3 and set a long cache TTL
+>
+> [!WARNING]
+> **🟡 Strong** — multi-layer CDN strategy. (1) Multi-CDN routing: two providers, DNS routes to the one with lower measured P95 latency for that region. Failover in seconds. (2) Origin shielding: instead of all CDN POPs fetching independently from S3 on a miss, a small set of shield POPs (10-20 globally) fetch from S3 and local POPs fetch from the shield. Reduces S3 request rate from O(POPs × misses) to O(shields × misses)
+>
+> [!TIP]
+> **🟢 Staff+** — cache warming: for large channels, the CDN push API pre-populates segments at relevant POPs before the video goes live. No cold cache for the first million viewers of a major release. Purge strategy: deleted or copyright-struck videos need instant CDN purge across all POPs. Tag-based purge: all segments of a video_id are tagged at upload time, purged with a single API call on deletion
+
+
+_Why the deep dives connect to the scaling problem: "Large blob uploads, expensive transcoding, massive read-heavy streaming." Each deep dive addresses one layer._
 
 </details>
 

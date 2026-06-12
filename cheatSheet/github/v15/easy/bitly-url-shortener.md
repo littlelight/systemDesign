@@ -244,16 +244,42 @@ The other tricky part is global uniqueness for short codes. If you scale the wri
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Unique short code generation (the core hard problem)
-The scaling pain here is coordination — every server needs a unique code without collision. Weak candidates describe hashing and move on. Strong candidates articulate a progression of approaches and their tradeoffs. Start with MD5/SHA-256 + Base62 truncation: simple but has collision probability that grows as n/|S|. The fix is a uniqueness check + retry, which adds a DB roundtrip. The better default is a global atomic counter in Redis (INCR is single-threaded, atomic, eliminates collisions entirely) with Base62 encoding. The staff-level concern is the counter as a single point of failure: pre-allocated ID ranges per app server (each batch-fetches 1,000 IDs, eliminating per-request Redis coordination), and the counter node failing means temporary unavailability of writes but no data loss. For Staff+ mention the predictability risk: sequential codes are enumerable. Mitigation: XOR the counter with a secret key before encoding, or accept that short URLs are meant to be shared publicly anyway.
+#### Deep dive 1: Unique short code generation (the core hard problem)
+_The scaling pain here is coordination — every server needs a unique code without collision_
 
-Deep dive 2: Fast redirects at scale (the read scaling problem)
-Weak answer: add a database index on short_code and query on every redirect. Strong answer: this is what makes Bitly hard — 100M DAU clicking links 10× per day = 11,600 read QPS, with viral links creating hot keys at 100× that rate. A database index on short_code is necessary but not sufficient. The right answer layers caching: Redis with cache-aside pattern absorbs 99% of reads. Staff-level detail: cache TTL should be set equal to or shorter than URL expiration so expired URLs auto-evict from cache (otherwise you serve expired redirects). For hot keys (viral links), add a local in-process LRU cache on each app server — zero network hops, handles traffic spikes that would otherwise hammer Redis. For global-scale: CDN caching of the 302 response itself with a short Cache-Control header removes Redis from the critical path entirely for the most popular links.
+> [!CAUTION]
+> **🔴 Weak** — Describe hashing and move on
+>
+> [!WARNING]
+> **🟡 Strong** — articulate a progression of approaches and their tradeoffs. Start with MD5/SHA-256 + Base62 truncation: simple but has collision probability that grows as n/|S|. The fix is a uniqueness check + retry, which adds a DB roundtrip. The better default is a global atomic counter in Redis (INCR is single-threaded, atomic, eliminates collisions entirely) with Base62 encoding. The staff-level concern is the counter as a single point of failure: pre-allocated ID ranges per app server (each batch-fetches 1,000 IDs, eliminating per-request Redis coordination), and the counter node failing means temporary unavailability of writes but no data loss
+>
+> [!TIP]
+> **🟢 Staff+** — Mention the predictability risk: sequential codes are enumerable. Mitigation: XOR the counter with a secret key before encoding, or accept that short URLs are meant to be shared publicly anyway
 
-Deep dive 3: Scaling to 1B URLs and 100M DAU (the DB and infrastructure problem)
-Weak answer: scale the database vertically and add read replicas. Strong answer: storage is not the hard part — 1B × 500 bytes = 500 GB, comfortably on a single PostgreSQL node with read replicas. The hard part is write coordination for the counter and horizontal scaling of stateless redirect servers. Senior answer: stateless redirect service behind a load balancer, Redis cluster for the counter, PG primary + read replicas. Staff+ answer: the counter service is the hidden bottleneck — pre-allocated ID ranges mean app servers can generate IDs locally without any network call (counter node becomes a periodic flush rather than a per-request bottleneck). Multi-region: deploy read replicas and Redis caches regionally, write counter remains in one region (acceptable because writes are rare). For URL expiration at scale: don't run a full table scan — use a time-indexed expiry column and batch-delete expired rows during low-traffic windows.
 
-Why the deep dives connect to the scaling problem: The scaling pain is "reads explode while writes stay small." Deep dive 1 solves write uniqueness. Deep dive 2 solves read performance. Deep dive 3 solves infrastructure capacity. Name this arc explicitly in the interview — it shows architectural thinking, not just pattern recall.
+#### Deep dive 2: Fast redirects at scale (the read scaling problem)
+> [!CAUTION]
+> **🔴 Weak** — add a database index on short_code and query on every redirect
+>
+> [!WARNING]
+> **🟡 Strong** — this is what makes Bitly hard — 100M DAU clicking links 10× per day = 11,600 read QPS, with viral links creating hot keys at 100× that rate. A database index on short_code is necessary but not sufficient. The right answer layers caching: Redis with cache-aside pattern absorbs 99% of reads
+>
+> [!TIP]
+> **🟢 Staff+** — cache TTL should be set equal to or shorter than URL expiration so expired URLs auto-evict from cache (otherwise you serve expired redirects). For hot keys (viral links), add a local in-process LRU cache on each app server — zero network hops, handles traffic spikes that would otherwise hammer Redis. For global-scale: CDN caching of the 302 response itself with a short Cache-Control header removes Redis from the critical path entirely for the most popular links
+
+
+#### Deep dive 3: Scaling to 1B URLs and 100M DAU (the DB and infrastructure problem)
+> [!CAUTION]
+> **🔴 Weak** — scale the database vertically and add read replicas
+>
+> [!WARNING]
+> **🟡 Strong** — storage is not the hard part — 1B × 500 bytes = 500 GB, comfortably on a single PostgreSQL node with read replicas. The hard part is write coordination for the counter and horizontal scaling of stateless redirect servers. Senior answer: stateless redirect service behind a load balancer, Redis cluster for the counter, PG primary + read replicas
+>
+> [!TIP]
+> **🟢 Staff+** — the counter service is the hidden bottleneck — pre-allocated ID ranges mean app servers can generate IDs locally without any network call (counter node becomes a periodic flush rather than a per-request bottleneck). Multi-region: deploy read replicas and Redis caches regionally, write counter remains in one region (acceptable because writes are rare). For URL expiration at scale: don't run a full table scan — use a time-indexed expiry column and batch-delete expired rows during low-traffic windows
+
+
+_Why the deep dives connect to the scaling problem: The scaling pain is "reads explode while writes stay small." Deep dive 1 solves write uniqueness. Deep dive 2 solves read performance. Deep dive 3 solves infrastructure capacity. Name this arc explicitly in the interview — it shows architectural thinking, not just pattern recall._
 
 </details>
 

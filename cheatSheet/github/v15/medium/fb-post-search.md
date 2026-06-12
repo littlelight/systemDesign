@@ -283,16 +283,42 @@ So the short interview answer is this. FB Post Search is hard because it combine
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Inverted index design — term mapping to post IDs with two sort orders
-Weak answer: one unified Elasticsearch index, sort at query time. Strong answer: the core data structure: a map from each keyword to an ordered list of post IDs containing that keyword. Two sort orders are required: recency (post_id DESC or created_at DESC) and popularity (like_count DESC). Weak answer: one index, sort at query time. Strong answer: two separate indexes, each optimized for its sort order. The recency index is append-only (new posts are always the most recent — just append to the front). The like-count index is updated on every like — much more expensive because one like on a popular post triggers updates to potentially thousands of term lists. Staff+ optimization: don't update the like-count index on every individual like. Batch like updates in Redis: increment a like counter in Redis, flush to the index every 5 minutes. This reduces write amplification from O(terms_per_post) per like to O(terms_per_post) per 5-minute window. The tradeoff: like-count rankings are slightly stale (up to 5 minutes) — acceptable, as users don't notice.
+#### Deep dive 1: Inverted index design — term mapping to post IDs with two sort orders
+> [!CAUTION]
+> **🔴 Weak** — one unified Elasticsearch index, sort at query time
+>
+> [!WARNING]
+> **🟡 Strong** — the core data structure: a map from each keyword to an ordered list of post IDs containing that keyword. Two sort orders are required: recency (post_id DESC or created_at DESC) and popularity (like_count DESC). Weak answer: one index, sort at query time. Strong answer: two separate indexes, each optimized for its sort order. The recency index is append-only (new posts are always the most recent — just append to the front). The like-count index is updated on every like — much more expensive because one like on a popular post triggers updates to potentially thousands of term lists
+>
+> [!TIP]
+> **🟢 Staff+** — don't update the like-count index on every individual like. Batch like updates in Redis: increment a like counter in Redis, flush to the index every 5 minutes. This reduces write amplification from O(terms_per_post) per like to O(terms_per_post) per 5-minute window. The tradeoff: like-count rankings are slightly stale (up to 5 minutes) — acceptable, as users don't notice
 
-Deep dive 2: Privacy filtering — the friend-graph problem
-Privacy is the hardest part of FB Post Search. Every result must be filtered against the viewer's permission to see it. Weak answer: post-query filter for every result. Strong answer: coarse filter in ES (privacy_level field: PUBLIC, FRIENDS, PRIVATE) combined with a friend-graph check in the app layer for FRIENDS-only posts. Staff+ detail: why not store friend lists in ES documents? The friend list for a user can be millions of people and changes constantly — storing it in every post document would make ES documents enormous and constantly out of date. The hybrid approach: ES returns candidates filtered by privacy_level. For FRIENDS posts in the result set, batch-query the social graph service: "Is viewer X friends with any of these [user_ids]?" This is a set intersection problem — solved efficiently with Bloom filters per user (is viewer in author's friend set?) or with a graph adjacency lookup. The friend check adds ~20ms to P99 latency — acceptable for a search query.
 
-Deep dive 3: Freshness — new posts appearing in search within 1 minute
-Weak answer: sync Elasticsearch from PostgreSQL with a scheduled batch job every 10 minutes. Strong answer: users expect to search for something they just posted and find it. The ingestion pipeline: post created in PG → Kafka event → index worker → ES update. End-to-end target: < 1 minute. Staff+ bottlenecks to address: (1) ES bulk indexing batch size — larger batches are more efficient but add latency. At 5,787 posts/second, even 1-second batches give reasonable throughput. (2) ES refresh interval — by default ES refreshes the search index every 1 second (making indexed docs visible to search). For breaking news content: reduce refresh interval to 100ms for the first 5 minutes after a high-engagement post is created (dynamic refresh rate based on post engagement velocity). (3) High-engagement posts fast-lane: ML classifier identifies potentially viral posts within seconds of publish — route these to a priority Kafka topic with a dedicated low-latency indexer.
+#### Deep dive 2: Privacy filtering — the friend-graph problem
+_Privacy is the hardest part of FB Post Search. Every result must be filtered against the viewer's permission to see it_
 
-Why the deep dives connect to the scaling problem: "Massive inverted indexes, hot keywords, write amplification, and freshness." Each deep dive addresses one constraint.
+> [!CAUTION]
+> **🔴 Weak** — post-query filter for every result
+>
+> [!WARNING]
+> **🟡 Strong** — coarse filter in ES (privacy_level field: PUBLIC, FRIENDS, PRIVATE) combined with a friend-graph check in the app layer for FRIENDS-only posts
+>
+> [!TIP]
+> **🟢 Staff+** — why not store friend lists in ES documents? The friend list for a user can be millions of people and changes constantly — storing it in every post document would make ES documents enormous and constantly out of date. The hybrid approach: ES returns candidates filtered by privacy_level. For FRIENDS posts in the result set, batch-query the social graph service: "Is viewer X friends with any of these [user_ids]?" This is a set intersection problem — solved efficiently with Bloom filters per user (is viewer in author's friend set?) or with a graph adjacency lookup. The friend check adds ~20ms to P99 latency — acceptable for a search query
+
+
+#### Deep dive 3: Freshness — new posts appearing in search within 1 minute
+> [!CAUTION]
+> **🔴 Weak** — sync Elasticsearch from PostgreSQL with a scheduled batch job every 10 minutes
+>
+> [!WARNING]
+> **🟡 Strong** — users expect to search for something they just posted and find it. The ingestion pipeline: post created in PG → Kafka event → index worker → ES update. End-to-end target: < 1 minute
+>
+> [!TIP]
+> **🟢 Staff+** — bottlenecks to address: (1) ES bulk indexing batch size — larger batches are more efficient but add latency. At 5,787 posts/second, even 1-second batches give reasonable throughput. (2) ES refresh interval — by default ES refreshes the search index every 1 second (making indexed docs visible to search). For breaking news content: reduce refresh interval to 100ms for the first 5 minutes after a high-engagement post is created (dynamic refresh rate based on post engagement velocity). (3) High-engagement posts fast-lane: ML classifier identifies potentially viral posts within seconds of publish — route these to a priority Kafka topic with a dedicated low-latency indexer
+
+
+_Why the deep dives connect to the scaling problem: "Massive inverted indexes, hot keywords, write amplification, and freshness." Each deep dive addresses one constraint._
 
 </details>
 

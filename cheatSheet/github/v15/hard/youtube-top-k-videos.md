@@ -288,16 +288,40 @@ A fourth issue is cardinality. There are billions of videos, but only a tiny fra
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Count-Min Sketch — approximate frequency counting at stream scale
-Weak answer: maintain a HashMap of video_id → count, increment on every view event. At 800M videos × 8 bytes = 6.4 GB of counters updated at 11K/sec — too expensive, and one hot video creates a write bottleneck. Strong answer: Count-Min Sketch — a 2D array of W×D counters. On each event: hash video_id with D hash functions, increment the counter at each position. To estimate count: take the minimum of the D values. Staff+ sizing: at 1% error with 99.9% confidence, W ≈ 2718, D ≈ 7. Total memory: 152 KB per time window vs 6.4 GB for exact counting. For Top K specifically: combine CMS with a Min-Heap of K items — only track candidates whose estimated count exceeds the current K-th largest. The heap has K entries; the sketch stays constant size regardless of cardinality.
+#### Deep dive 1: Count-Min Sketch — approximate frequency counting at stream scale
+> [!CAUTION]
+> **🔴 Weak** — maintain a HashMap of video_id → count, increment on every view event. At 800M videos × 8 bytes = 6.4 GB of counters updated at 11K/sec — too expensive, and one hot video creates a write bottleneck
+>
+> [!WARNING]
+> **🟡 Strong** — Count-Min Sketch — a 2D array of W×D counters. On each event: hash video_id with D hash functions, increment the counter at each position. To estimate count: take the minimum of the D values
+>
+> [!TIP]
+> **🟢 Staff+** — at 1% error with 99.9% confidence, W ≈ 2718, D ≈ 7. Total memory: 152 KB per time window vs 6.4 GB for exact counting. For Top K specifically: combine CMS with a Min-Heap of K items — only track candidates whose estimated count exceeds the current K-th largest. The heap has K entries; the sketch stays constant size regardless of cardinality
 
-Deep dive 2: Lambda Architecture — why both stream and batch paths are needed
-Weak answer: use Flink stream processing only — it handles the volume. Strong answer: stream-only (Kappa architecture) gives approximate results. For ad revenue, creator monetization, and copyright detection, approximate counts are legally insufficient. Lambda Architecture: real-time path gives approximate counts for the trending dashboard (fast, approximate), batch path gives exact counts for billing and reporting (slow, exact). Staff+ implementation: real-time path (Flink + CMS + Redis sorted set) runs continuously. Batch path (Spark on S3 event lake) runs daily, produces audited exact counts. Serving layer stores both: consumers use exact counts when available, approximate otherwise. Never use approximate counts for financial reporting.
 
-Deep dive 3: Time window management — tumbling vs. sliding, late event handling
-Weak answer: use a single global counter per video — no time window awareness. Strong answer: separate state per window (1hr, 24hr, 7day) using Flink tumbling windows. Each window starts fresh at its boundary. Staff+ tradeoff: tumbling windows are simpler but the trending list jumps at boundaries — a video popular for the last 59 minutes drops off suddenly at the 1-hour mark. Flink sliding windows give smoother signal but require keeping state for the full window duration. Recommendation: tumbling for longer periods (24h, 7d) where boundary jumps are acceptable, sliding for the 1-hour list where users expect smooth changes. Late event handling: Flink watermark with 2-minute allowed lateness. Events arriving later go to the batch path for exact reconciliation.
+#### Deep dive 2: Lambda Architecture — why both stream and batch paths are needed
+> [!CAUTION]
+> **🔴 Weak** — use Flink stream processing only — it handles the volume
+>
+> [!WARNING]
+> **🟡 Strong** — stream-only (Kappa architecture) gives approximate results. For ad revenue, creator monetization, and copyright detection, approximate counts are legally insufficient. Lambda Architecture: real-time path gives approximate counts for the trending dashboard (fast, approximate), batch path gives exact counts for billing and reporting (slow, exact)
+>
+> [!TIP]
+> **🟢 Staff+** — implementation: real-time path (Flink + CMS + Redis sorted set) runs continuously. Batch path (Spark on S3 event lake) runs daily, produces audited exact counts. Serving layer stores both: consumers use exact counts when available, approximate otherwise. Never use approximate counts for financial reporting
 
-Why the deep dives connect to the scaling problem: "Massive write throughput, windowed aggregation, and precision vs. latency." Each deep dive addresses one constraint.
+
+#### Deep dive 3: Time window management — tumbling vs. sliding, late event handling
+> [!CAUTION]
+> **🔴 Weak** — use a single global counter per video — no time window awareness
+>
+> [!WARNING]
+> **🟡 Strong** — separate state per window (1hr, 24hr, 7day) using Flink tumbling windows. Each window starts fresh at its boundary
+>
+> [!TIP]
+> **🟢 Staff+** — tradeoff: tumbling windows are simpler but the trending list jumps at boundaries — a video popular for the last 59 minutes drops off suddenly at the 1-hour mark. Flink sliding windows give smoother signal but require keeping state for the full window duration. Recommendation: tumbling for longer periods (24h, 7d) where boundary jumps are acceptable, sliding for the 1-hour list where users expect smooth changes. Late event handling: Flink watermark with 2-minute allowed lateness. Events arriving later go to the batch path for exact reconciliation
+
+
+_Why the deep dives connect to the scaling problem: "Massive write throughput, windowed aggregation, and precision vs. latency." Each deep dive addresses one constraint._
 
 </details>
 

@@ -203,17 +203,56 @@ Rank queries stay O(log N) as N grows. Real limits are write throughput during t
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Why sorted set beats SQL
-At 100M players RANK() OVER scans entire table. ZREVRANK is ~27 comparisons. Top-100 is O(100) regardless of N.
+#### Deep dive 1: Why sorted set beats SQL
+_At 100M players RANK() OVER scans entire table. ZREVRANK is ~27 comparisons. Top-100 is O(100) regardless of N_
 
-Deep dive 2: Durability and rebuild
-Redis AOF + RDB. On total loss: batch ZADD from Cassandra — minutes for 100M players. Serve stale cached top-100 during rebuild.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify why sorted set beats sql — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — At 100M players RANK() OVER scans entire table. ZREVRANK is ~27 comparisons. Top-100 is O(100) regardless of N
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
-Deep dive 3: Write throughput and tournament storms
-167K ZINCRBY/s within Redis capacity. Top-100 cache with 1s TTL collapses read storm to 1 ZREVRANGE/s.
 
-Deep dive 4: Seasonal resets without downtime
-RENAME leaderboard:daily to leaderboard:daily:yesterday atomically at midnight. New empty set for new period.
+#### Deep dive 2: Durability and rebuild
+_Redis AOF + RDB. On total loss: batch ZADD from Cassandra — minutes for 100M players. Serve stale cached top-100 during rebuild_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify durability and rebuild — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Redis AOF + RDB. On total loss: batch ZADD from Cassandra — minutes for 100M players. Serve stale cached top-100 during rebuild
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Write throughput and tournament storms
+_167K ZINCRBY/s within Redis capacity. Top-100 cache with 1s TTL collapses read storm to 1 ZREVRANGE/s_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify write throughput and tournament storms — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — 167K ZINCRBY/s within Redis capacity. Top-100 cache with 1s TTL collapses read storm to 1 ZREVRANGE/s
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Seasonal resets without downtime
+_RENAME leaderboard:daily to leaderboard:daily:yesterday atomically at midnight. New empty set for new period_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify seasonal resets without downtime — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — RENAME leaderboard:daily to leaderboard:daily:yesterday atomically at midnight. New empty set for new period
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

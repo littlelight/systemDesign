@@ -257,16 +257,42 @@ The extra twist is that the best design changes for mega-streams. For normal vid
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Batching — the mandatory optimization that makes fan-out viable
-1M viewers × 1 comment per 100ms = 10M SSE pushes per second if done naively. No system survives this. The critical insight: batching is not an optimization, it's a requirement. Weak answer: batch at the delivery server. Strong answer: batch at the Kafka consumption layer. Delivery server consumes Kafka for a video_id partition, buffers incoming comment events for 100ms, then pushes a single batch payload to all 10K connected clients. The batch payload: {comments: [{id, text, author, timestamp}, ...], viewer_count: 1000000}. Staff+ detail: the batching window is a tunable parameter. 100ms gives 10 batches/second — fast enough for a live conversation feel, slow enough to be viable at scale. For ultra-high-volume streams: adaptive batching — increase window size as comment rate increases, keeping per-viewer bandwidth constant regardless of comment volume. The coalescing also improves compression ratio on the SSE payload (repeated fields in multiple comments compress well).
+#### Deep dive 1: Batching — the mandatory optimization that makes fan-out viable
+_1M viewers × 1 comment per 100ms = 10M SSE pushes per second if done naively. No system survives this. The critical insight: batching is not an optimization, it's a requirement_
 
-Deep dive 2: Partitioning and delivery server locality — eliminating cross-server coordination
-Weak answer: route comment events to any available delivery server, then fan-out via cross-server pub/sub. Strong answer: Kafka partition key = video_id. All comments for a video go to one Kafka partition. One delivery server group (2-3 servers) consumes each partition. By contract, all viewers of a video are connected to servers in the group that consumes that video's partition. Result: fan-out requires zero cross-server communication — the consuming server directly has all viewer connections. Staff+ concern: what about load balancing? A viral video creates a hot partition (1M viewers on 2-3 servers). Mitigation: hot video detection — when a video exceeds a viewer threshold, allocate multiple Kafka partitions for it and a larger server group. Connection routing: clients are directed to servers in the right group via DNS-based load balancing with video_id affinity. For mega-streams (Super Bowl: 50M+ viewers): dedicated server cluster for the stream, isolated from regular traffic, pre-provisioned.
+> [!CAUTION]
+> **🔴 Weak** — batch at the delivery server
+>
+> [!WARNING]
+> **🟡 Strong** — batch at the Kafka consumption layer. Delivery server consumes Kafka for a video_id partition, buffers incoming comment events for 100ms, then pushes a single batch payload to all 10K connected clients. The batch payload: {comments: [{id, text, author, timestamp}, ...], viewer_count: 1000000}
+>
+> [!TIP]
+> **🟢 Staff+** — the batching window is a tunable parameter. 100ms gives 10 batches/second — fast enough for a live conversation feel, slow enough to be viable at scale. For ultra-high-volume streams: adaptive batching — increase window size as comment rate increases, keeping per-viewer bandwidth constant regardless of comment volume. The coalescing also improves compression ratio on the SSE payload (repeated fields in multiple comments compress well)
 
-Deep dive 3: Historical comments and late joiners — the catch-up problem
-Weak answer: send the entire comment history on connect, then switch to live stream. Strong answer: a viewer joins a live stream 30 minutes in. They need: (1) the last N comments to provide context, (2) then a seamless transition to the live comment stream. Weak answer: load from DB then connect to SSE. Strong answer: explicit catch-up protocol. On SSE connection: client sends last_comment_id = 0 (new viewer). Server queries Cassandra: SELECT * FROM comments WHERE video_id=? AND id > 0 ORDER BY id ASC LIMIT 30. Returns the 30 most recent comments. Then switches client to live SSE stream. Client deduplicates by comment_id in case the SSE stream delivers a comment that was already in the catch-up response. Staff+ detail: the catch-up query uses a cursor (comment_id) not a timestamp — comment_ids are monotonically increasing Snowflake IDs that encode time, so they're both ordered and unique. The transition from catch-up to live is seamless: client tracks max comment_id received, SSE stream starts from next ID.
 
-Why the deep dives connect to the scaling problem: "Fan-out under extreme skew." Deep dive 1 solves the fan-out rate problem. Deep dive 2 solves the routing problem. Deep dive 3 solves the late-joiner problem.
+#### Deep dive 2: Partitioning and delivery server locality — eliminating cross-server coordination
+> [!CAUTION]
+> **🔴 Weak** — route comment events to any available delivery server, then fan-out via cross-server pub/sub
+>
+> [!WARNING]
+> **🟡 Strong** — Kafka partition key = video_id. All comments for a video go to one Kafka partition. One delivery server group (2-3 servers) consumes each partition. By contract, all viewers of a video are connected to servers in the group that consumes that video's partition. Result: fan-out requires zero cross-server communication — the consuming server directly has all viewer connections
+>
+> [!TIP]
+> **🟢 Staff+** — what about load balancing? A viral video creates a hot partition (1M viewers on 2-3 servers). Mitigation: hot video detection — when a video exceeds a viewer threshold, allocate multiple Kafka partitions for it and a larger server group. Connection routing: clients are directed to servers in the right group via DNS-based load balancing with video_id affinity. For mega-streams (Super Bowl: 50M+ viewers): dedicated server cluster for the stream, isolated from regular traffic, pre-provisioned
+
+
+#### Deep dive 3: Historical comments and late joiners — the catch-up problem
+> [!CAUTION]
+> **🔴 Weak** — send the entire comment history on connect, then switch to live stream
+>
+> [!WARNING]
+> **🟡 Strong** — a viewer joins a live stream 30 minutes in. They need: (1) the last N comments to provide context, (2) then a seamless transition to the live comment stream. Weak answer: load from DB then connect to SSE. Strong answer: explicit catch-up protocol. On SSE connection: client sends last_comment_id = 0 (new viewer). Server queries Cassandra: SELECT * FROM comments WHERE video_id=? AND id > 0 ORDER BY id ASC LIMIT 30. Returns the 30 most recent comments. Then switches client to live SSE stream. Client deduplicates by comment_id in case the SSE stream delivers a comment that was already in the catch-up response
+>
+> [!TIP]
+> **🟢 Staff+** — the catch-up query uses a cursor (comment_id) not a timestamp — comment_ids are monotonically increasing Snowflake IDs that encode time, so they're both ordered and unique. The transition from catch-up to live is seamless: client tracks max comment_id received, SSE stream starts from next ID
+
+
+_Why the deep dives connect to the scaling problem: "Fan-out under extreme skew." Deep dive 1 solves the fan-out rate problem. Deep dive 2 solves the routing problem. Deep dive 3 solves the late-joiner problem._
 
 </details>
 

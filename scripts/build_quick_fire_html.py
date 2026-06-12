@@ -99,15 +99,34 @@ def parse_patterns(body: str) -> list[dict]:
         title = re.sub(r"^[🔴🟠🟣🟢🔵]\s*", "", title)
         title = re.sub(r"^Diagram ·\s*", "Diagram · ", title)  # keep diagram titles distinct
         rest = "\n".join(lines[1:])
-        staff = trade = example = visual = ""
-        # Plain or GitHub-callout format (> **Staff-level answer:**)
+        weak = staff = staff_plus = trade = example = visual = ""
+        m = re.search(r"\*\*🔴 Weak\*\* —\s*(.+?)(?=\n> \[!|\n\*\*Trade|\n📊|\n---|\Z)", rest, re.S)
+        if m:
+            weak = re.sub(r"\n> ?", " ", m.group(1)).strip()
         m = re.search(
-            r"(?:^|\n)>?\s*\*\*Staff-level answer:\*\*\s*(.+?)(?=\n>?\s*\*\*Trade-offs|\n\n📊|\n---|\n### |\Z)",
+            r"\*\*🟡 Strong\*\* —\s*(.+?)(?=\n> \[!|\n\*\*Trade|\n📊|\n---|\Z)",
             rest,
             re.S,
         )
         if m:
             staff = re.sub(r"\n> ?", " ", m.group(1)).strip()
+        if not staff:
+            m = re.search(
+                r"(?:^|\n)>?\s*\*\*Staff-level answer:\*\*\s*(.+?)(?=\n>?\s*\*\*Trade-offs|\n\n📊|\n---|\n### |\Z)",
+                rest,
+                re.S,
+            )
+            if m:
+                staff = re.sub(r"\n> ?", " ", m.group(1)).strip()
+        m = re.search(
+            r"\*\*🟢 Staff\+\*\* —\s*(.+?)(?=\n\*\*Trade|\n📊|\n---|\Z)",
+            rest,
+            re.S,
+        )
+        if m:
+            staff_plus = re.sub(r"\n> ?", " ", m.group(1)).strip()
+        else:
+            staff_plus = ""
         m = re.search(
             r"(?:^|\n)>?\s*\*\*Trade-offs:\*\*\s*(.+?)(?=\n>?\s*\*\*Example|\n\n📊|\n---|\n### |\Z)",
             rest,
@@ -131,7 +150,9 @@ def parse_patterns(body: str) -> list[dict]:
             {
                 "title": title,
                 "slug": slugify(title),
+                "weak": weak,
                 "staff": staff,
+                "staff_plus": staff_plus,
                 "trade": trade,
                 "example": example,
                 "visual": visual,
@@ -233,6 +254,8 @@ def enrich_markdown(md: str, sections: list[dict]) -> str:
 
             if not p["staff"]:
                 continue
+            if f"**🔴 Weak** —" in md and f"### {sev_p['emoji']} {p['title']}" in md:
+                continue
             if f"> [!{sev_p['alert']}]\n> **Staff-level answer:** {p['staff'][:40]}" in md:
                 continue
             card = (
@@ -277,7 +300,9 @@ def build_html(intro: str, sections: list[dict]) -> str:
                 "patterns": [
                     {
                         **p,
+                        "weak_html": md_inline(p.get("weak", "")),
                         "staff_html": md_inline(p["staff"]),
+                        "staff_plus_html": md_inline(p.get("staff_plus", "")),
                         "trade_html": md_inline(p["trade"]),
                         "example_html": md_inline(p["example"]),
                         "visual_html": md_inline(p["visual"]) if p["visual"] else "",
@@ -449,7 +474,7 @@ function render() {{
   DATA.forEach(sec => {{
     const patterns = sec.patterns.filter(p => {{
       if (!showAll && !active.includes(p.severity)) return false;
-      const hay = (p.title + ' ' + p.staff + ' ' + p.trade).toLowerCase();
+      const hay = (p.title + ' ' + (p.weak||'') + ' ' + p.staff + ' ' + p.trade).toLowerCase();
       return !q || hay.includes(q);
     }});
     if (!patterns.length) return;
@@ -472,7 +497,9 @@ function render() {{
           <span class="card-chev">▶</span>
         </div>
         <div class="card-body">
-          <div class="callout ${{p.severity}}"><strong>Staff-level answer</strong>${{p.staff_html}}</div>
+          ${{p.weak_html ? `<div class="callout critical"><strong>🔴 Weak</strong>${{p.weak_html}}</div>` : ''}}
+          <div class="callout ${{p.severity}}"><strong>🟡 Strong</strong>${{p.staff_html}}</div>
+          ${{p.staff_plus_html ? `<div class="callout pattern"><strong>🟢 Staff+</strong>${{p.staff_plus_html}}</div>` : ''}}
           <div class="callout ${{p.severity}}" style="opacity:.92"><strong>Trade-offs</strong>${{p.trade_html}}</div>
           <div class="callout ${{p.severity}}" style="opacity:.85"><strong>Example</strong>${{p.example_html}}</div>
           ${{p.visual_html ? `<div class="visual">📊 <strong>Visual:</strong> ${{p.visual_html}}</div>` : ''}}

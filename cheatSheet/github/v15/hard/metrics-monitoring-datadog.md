@@ -305,16 +305,40 @@ A good short interview answer is this. Metrics Monitoring is hard to scale becau
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Cardinality explosion — the hidden scaling killer
-Weak answer: accept all metrics with any label combinations — flexibility is good, users know what they need. Strong answer: cardinality enforcement at ingestion. Each unique combination of metric name + label values creates a new time series. One developer adds user_id to a request_latency metric: 10M users × 1 metric = 10M new series overnight. TSDB memory exhausted, query performance collapses. Hard cap per metric (10K series), alert at 1K series, reject above cap with an actionable error. Staff+ label allowlist: developers define allowed labels per metric at registration time. user_id is not in the allowlist by default — it requires explicit review. Provide a cardinality dashboard so developers can see the impact of their instrumentation choices before hitting the cap. The allowlist is the proactive control; the hard cap is the safety net.
+#### Deep dive 1: Cardinality explosion — the hidden scaling killer
+> [!CAUTION]
+> **🔴 Weak** — accept all metrics with any label combinations — flexibility is good, users know what they need
+>
+> [!WARNING]
+> **🟡 Strong** — cardinality enforcement at ingestion. Each unique combination of metric name + label values creates a new time series. One developer adds user_id to a request_latency metric: 10M users × 1 metric = 10M new series overnight. TSDB memory exhausted, query performance collapses. Hard cap per metric (10K series), alert at 1K series, reject above cap with an actionable error
+>
+> [!TIP]
+> **🟢 Staff+** — label allowlist: developers define allowed labels per metric at registration time. user_id is not in the allowlist by default — it requires explicit review. Provide a cardinality dashboard so developers can see the impact of their instrumentation choices before hitting the cap. The allowlist is the proactive control; the hard cap is the safety net
 
-Deep dive 2: Query performance — rollups and columnar storage for time-range queries
-Weak answer: store raw metrics at 1-second resolution forever, query from raw data for all dashboard requests. A 30-day dashboard chart at 1-second resolution = 2.6M data points per metric per host. At 500K hosts, this is 1.3 trillion data points per query — impossible. Strong answer: multi-resolution rollup architecture. Raw (1s): retain 24 hours. 1-minute rollup: retain 30 days. 1-hour rollup: retain forever. Dashboard query routing: time range > 24h → 1-minute rollups; > 30 days → 1-hour rollups. A 30-day chart at 1-min resolution = 1,440 points vs 2.6M raw — 1800× fewer data points, no visible chart difference at typical widths. Staff+ implementation: TimescaleDB continuous aggregates or InfluxDB tasks compute rollups automatically on insert. The rollup is always up-to-date without a separate batch job. ClickHouse for the rollup serving layer: columnar compression and SIMD-accelerated GROUP BY queries make analytical aggregations over millions of series fast.
 
-Deep dive 3: Alert evaluation — reliability and isolation from dashboard traffic
-Weak answer: run alert evaluation as a query against the same TSDB that serves dashboards. During an incident, dashboard traffic spikes 3×. Alert evaluation competes for TSDB resources and gets delayed precisely when alerts are most critical. Strong answer: dedicate separate compute for alert evaluation — separate Kafka consumer group, separate TSDB read replicas, reserved CPU quota. Alert evaluation must never compete with dashboard queries. Staff+ failure modes: (1) alert evaluation falls behind (Kafka consumer lag) → autoscale alert evaluation workers, alert at >30s lag; (2) TSDB replica goes down → circuit breaker switches to alternate replica; (3) flapping alerts — cooldown periods (alert must be in firing state for N consecutive evaluations before paging) prevent noise during unstable incidents. Monitor the monitoring system: alert evaluation latency is itself a first-class SLA metric.
+#### Deep dive 2: Query performance — rollups and columnar storage for time-range queries
+> [!CAUTION]
+> **🔴 Weak** — store raw metrics at 1-second resolution forever, query from raw data for all dashboard requests. A 30-day dashboard chart at 1-second resolution = 2.6M data points per metric per host. At 500K hosts, this is 1.3 trillion data points per query — impossible
+>
+> [!WARNING]
+> **🟡 Strong** — multi-resolution rollup architecture. Raw (1s): retain 24 hours. 1-minute rollup: retain 30 days. 1-hour rollup: retain forever. Dashboard query routing: time range > 24h → 1-minute rollups; > 30 days → 1-hour rollups. A 30-day chart at 1-min resolution = 1,440 points vs 2.6M raw — 1800× fewer data points, no visible chart difference at typical widths
+>
+> [!TIP]
+> **🟢 Staff+** — implementation: TimescaleDB continuous aggregates or InfluxDB tasks compute rollups automatically on insert. The rollup is always up-to-date without a separate batch job. ClickHouse for the rollup serving layer: columnar compression and SIMD-accelerated GROUP BY queries make analytical aggregations over millions of series fast
 
-Why the deep dives connect to the scaling problem: "Massive write stream, expensive time-range queries, exploding series count." Each deep dive addresses one dimension.
+
+#### Deep dive 3: Alert evaluation — reliability and isolation from dashboard traffic
+> [!CAUTION]
+> **🔴 Weak** — run alert evaluation as a query against the same TSDB that serves dashboards. During an incident, dashboard traffic spikes 3×. Alert evaluation competes for TSDB resources and gets delayed precisely when alerts are most critical
+>
+> [!WARNING]
+> **🟡 Strong** — dedicate separate compute for alert evaluation — separate Kafka consumer group, separate TSDB read replicas, reserved CPU quota. Alert evaluation must never compete with dashboard queries
+>
+> [!TIP]
+> **🟢 Staff+** — s: (1) alert evaluation falls behind (Kafka consumer lag) → autoscale alert evaluation workers, alert at >30s lag; (2) TSDB replica goes down → circuit breaker switches to alternate replica; (3) flapping alerts — cooldown periods (alert must be in firing state for N consecutive evaluations before paging) prevent noise during unstable incidents. Monitor the monitoring system: alert evaluation latency is itself a first-class SLA metric
+
+
+_Why the deep dives connect to the scaling problem: "Massive write stream, expensive time-range queries, exploding series count." Each deep dive addresses one dimension._
 
 </details>
 

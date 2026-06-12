@@ -198,17 +198,56 @@ Petabyte payloads and metadata billions of keys — hashing and tiering dominate
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Consistent hashing and rebalancing
-Virtual nodes smooth load. On node add: steal ranges. On failure: replicate to successor.
+#### Deep dive 1: Consistent hashing and rebalancing
+_Virtual nodes smooth load. On node add: steal ranges. On failure: replicate to successor_
 
-Deep dive 2: Durability
-Sync replicate to 3 AZs before 200 OK on PUT. Background scrub detects bit rot.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify consistent hashing and rebalancing — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Virtual nodes smooth load. On node add: steal ranges. On failure: replicate to successor
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
-Deep dive 3: Large objects
-Multipart with part ETags. Coordinator commits manifest atomically.
 
-Deep dive 4: Listing at scale
-Prefix index per bucket shard. Paginate with continuation tokens.
+#### Deep dive 2: Durability
+_Sync replicate to 3 AZs before 200 OK on PUT. Background scrub detects bit rot_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify durability — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Sync replicate to 3 AZs before 200 OK on PUT. Background scrub detects bit rot
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Large objects
+_Multipart with part ETags. Coordinator commits manifest atomically_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify large objects — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Multipart with part ETags. Coordinator commits manifest atomically
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Listing at scale
+_Prefix index per bucket shard. Paginate with continuation tokens_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify listing at scale — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Prefix index per bucket shard. Paginate with continuation tokens
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

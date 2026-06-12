@@ -269,16 +269,42 @@ A good interview summary is this. Strava is hard because the client does a lot o
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: GPS time-series storage — TimescaleDB design for append-only high-volume data
-Weak answer: store GPS points as rows in a PostgreSQL table indexed by activity_id. Strong answer: the core constraint is 300K GPS point writes/second (10M users × 5 activities/week × 3,600 points/activity) combined with complex time-range queries for activity display and segment analysis. Weak answer: PostgreSQL with a GPS_points table. Strong answer: TimescaleDB with a hypertable partitioned by (activity_id, time). Time-partitioned storage means: (1) recent data is in memory or SSD, old data on cheaper storage; (2) time-range queries touch only the relevant partitions; (3) TTL/retention policies drop old partitions cheaply (DROP is instant, DELETE is O(N)). Staff+ schema design: GPS_points table has (activity_id, timestamp, lat, lng, elevation, heart_rate, power) as a time-series table. The partition key must be on timestamp for range query efficiency. Compression: TimescaleDB columnar compression reduces GPS data to 20% of original size with no query changes. Rollup: pre-aggregate GPS points to 10-second intervals for activities older than 30 days — reduces storage by 10× at the cost of reduced resolution for old activities (acceptable — users rarely scroll old activity GPS at full resolution).
+#### Deep dive 1: GPS time-series storage — TimescaleDB design for append-only high-volume data
+> [!CAUTION]
+> **🔴 Weak** — store GPS points as rows in a PostgreSQL table indexed by activity_id
+>
+> [!WARNING]
+> **🟡 Strong** — the core constraint is 300K GPS point writes/second (10M users × 5 activities/week × 3,600 points/activity) combined with complex time-range queries for activity display and segment analysis. Weak answer: PostgreSQL with a GPS_points table. Strong answer: TimescaleDB with a hypertable partitioned by (activity_id, time). Time-partitioned storage means: (1) recent data is in memory or SSD, old data on cheaper storage; (2) time-range queries touch only the relevant partitions; (3) TTL/retention policies drop old partitions cheaply (DROP is instant, DELETE is O(N))
+>
+> [!TIP]
+> **🟢 Staff+** — design: GPS_points table has (activity_id, timestamp, lat, lng, elevation, heart_rate, power) as a time-series table. The partition key must be on timestamp for range query efficiency. Compression: TimescaleDB columnar compression reduces GPS data to 20% of original size with no query changes. Rollup: pre-aggregate GPS points to 10-second intervals for activities older than 30 days — reduces storage by 10× at the cost of reduced resolution for old activities (acceptable — users rarely scroll old activity GPS at full resolution)
 
-Deep dive 2: Segment matching — Hausdorff distance at scale
-Weak answer: iterate through all 1M segments and run Hausdorff distance on each for every uploaded activity. Strong answer: every activity must be matched against all segments whose bounding box overlaps the activity's bounding box. At 83 activity uploads/second and 1M segments, naive O(activities × segments) is impossible. Staff+ approach: spatial index on segment bounding boxes (R-tree or geohash grid). For each activity: (1) compute activity bounding box, (2) query spatial index for segments whose bounding box overlaps, (3) run Hausdorff distance check on the reduced candidate set. The spatial index reduces candidates from 1M to ~100-500 per activity. Hausdorff distance: the maximum of the minimum distances between two polylines. Two polylines match if Hausdorff distance < threshold (e.g., 25 meters). GPS noise handling: smooth the activity GPS track with a Kalman filter or Douglas-Peucker simplification before matching — reduces false negatives from noisy data. Parallel matching: each activity's segment matches can be computed independently — embarrassingly parallel across worker nodes, partitioned by activity bounding box geohash.
 
-Deep dive 3: Segment leaderboards — Redis sorted sets with trimming
-Each segment has a leaderboard: fastest time by athletes who have completed that segment. The access pattern: frequent reads (users checking their ranking), moderate writes (new segment efforts after activity processing). Staff+ design: Redis sorted set per segment_id (key: leaderboard:{segment_id}, score: elapsed_seconds, member: user_id). ZADD adds a new effort; if the user has a previous effort, ZADD with NX flag only adds new members, so first add only — use regular ZADD but also track the user's best time separately to avoid storing worse efforts. On ZADD, also check if user's new time is better than their stored best (ZSCORE lookup, O(log N)), and only update if improved. ZREVRANGE for top-N is O(log N + K). Leaderboard trimming: ZREMRANGEBYRANK removes bottom entries, keeping only top 10K per segment (50K × 10K × 8 bytes = 4 GB total Redis for all segments). Historical rankings beyond top 10K are fetched from PostgreSQL.
+#### Deep dive 2: Segment matching — Hausdorff distance at scale
+> [!CAUTION]
+> **🔴 Weak** — iterate through all 1M segments and run Hausdorff distance on each for every uploaded activity
+>
+> [!WARNING]
+> **🟡 Strong** — every activity must be matched against all segments whose bounding box overlaps the activity's bounding box. At 83 activity uploads/second and 1M segments, naive O(activities × segments) is impossible
+>
+> [!TIP]
+> **🟢 Staff+** — approach: spatial index on segment bounding boxes (R-tree or geohash grid). For each activity: (1) compute activity bounding box, (2) query spatial index for segments whose bounding box overlaps, (3) run Hausdorff distance check on the reduced candidate set. The spatial index reduces candidates from 1M to ~100-500 per activity. Hausdorff distance: the maximum of the minimum distances between two polylines. Two polylines match if Hausdorff distance < threshold (e.g., 25 meters). GPS noise handling: smooth the activity GPS track with a Kalman filter or Douglas-Peucker simplification before matching — reduces false negatives from noisy data. Parallel matching: each activity's segment matches can be computed independently — embarrassingly parallel across worker nodes, partitioned by activity bounding box geohash
 
-Why the deep dives connect to the scaling problem: "Offline tracking, large route data, and social reads." Deep dive 1 solves time-series storage. Deep dive 2 solves segment matching at scale. Deep dive 3 solves leaderboard performance.
+
+#### Deep dive 3: Segment leaderboards — Redis sorted sets with trimming
+_Each segment has a leaderboard: fastest time by athletes who have completed that segment. The access pattern: frequent reads (users checking their ranking), moderate writes (new segment efforts after activity processing)_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify segment leaderboards — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Each segment has a leaderboard: fastest time by athletes who have completed that segment. The access pattern: frequent reads (users checking their ranking), moderate writes (new segment efforts after activity processing)
+>
+> [!TIP]
+> **🟢 Staff+** — design: Redis sorted set per segment_id (key: leaderboard:{segment_id}, score: elapsed_seconds, member: user_id). ZADD adds a new effort; if the user has a previous effort, ZADD with NX flag only adds new members, so first add only — use regular ZADD but also track the user's best time separately to avoid storing worse efforts. On ZADD, also check if user's new time is better than their stored best (ZSCORE lookup, O(log N)), and only update if improved. ZREVRANGE for top-N is O(log N + K). Leaderboard trimming: ZREMRANGEBYRANK removes bottom entries, keeping only top 10K per segment (50K × 10K × 8 bytes = 4 GB total Redis for all segments). Historical rankings beyond top 10K are fetched from PostgreSQL
+
+
+_Why the deep dives connect to the scaling problem: "Offline tracking, large route data, and social reads." Deep dive 1 solves time-series storage. Deep dive 2 solves segment matching at scale. Deep dive 3 solves leaderboard performance._
 
 </details>
 

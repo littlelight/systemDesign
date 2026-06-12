@@ -281,16 +281,40 @@ A fourth issue is that network cost starts to matter. On one machine, a hash loo
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Consistent hashing — O(K/N) remapping vs. O(K) for modulo
-Weak answer: use modulo hashing — key maps to node hash(key) % N. Simple. Adding node N+1 remaps N/(N+1) ≈ 100% of keys simultaneously. Every key misses, every miss hits the database, the database crashes. Strong answer: consistent hashing — place each node at one or more points on a 0→2^32 ring. A key maps to the first node clockwise from its hash. Adding a node: it takes over the key range between itself and its predecessor. Only K/N keys (~10%) are remapped. Staff+ detail: without virtual nodes, random ring positions create 3× variance in load across physical nodes — one node gets 30% of keys, another gets 5%. 150 virtual nodes per physical node (each node occupies 150 ring positions) gives uniform distribution. Adding a new node takes small slices from many existing nodes simultaneously, keeping load balanced from day one.
+#### Deep dive 1: Consistent hashing — O(K/N) remapping vs. O(K) for modulo
+> [!CAUTION]
+> **🔴 Weak** — use modulo hashing — key maps to node hash(key) % N. Simple. Adding node N+1 remaps N/(N+1) ≈ 100% of keys simultaneously. Every key misses, every miss hits the database, the database crashes
+>
+> [!WARNING]
+> **🟡 Strong** — consistent hashing — place each node at one or more points on a 0→2^32 ring. A key maps to the first node clockwise from its hash. Adding a node: it takes over the key range between itself and its predecessor. Only K/N keys (~10%) are remapped
+>
+> [!TIP]
+> **🟢 Staff+** — without virtual nodes, random ring positions create 3× variance in load across physical nodes — one node gets 30% of keys, another gets 5%. 150 virtual nodes per physical node (each node occupies 150 ring positions) gives uniform distribution. Adding a new node takes small slices from many existing nodes simultaneously, keeping load balanced from day one
 
-Deep dive 2: LRU eviction — O(1) get and O(1) evict with DLL + HashMap
-Weak answer: on every get, scan all entries to find the least recently used one to evict. O(N) eviction — unacceptable at any meaningful cache size. Strong answer: doubly-linked list + HashMap. HashMap stores (key → DLL node) for O(1) lookup. DLL maintains recency order: head = most recently used, tail = least recently used. get: HashMap lookup O(1), move node to head O(1). evict: remove tail O(1), delete from HashMap O(1). put: insert at head O(1), evict tail if at capacity O(1). Staff+ implementation: the DLL needs sentinel head and tail nodes to eliminate edge cases (empty list, single element). On get, moving a node from its current position requires unlinking from prev/next and relinking at head — all O(1) pointer operations. LFU as an alternative: tracks access frequency, evicts least frequently used. Better for stable hot/cold workloads but has O(log N) update cost and poor cold-start behavior (new popular key starts at frequency 1, immediately evictable).
 
-Deep dive 3: Replication and failure handling — availability without sacrificing latency
-Weak answer: replicate synchronously — every write waits for replica ACK before confirming to the client. Correct, but doubles write latency. Strong answer: async replication for a cache. Cache data is derived — it can be rebuilt from the source of truth (the DB). Losing the last few milliseconds of writes on primary failure is acceptable; the data is just re-fetched on the next miss. Primary + 1-2 replicas per shard, async replication, Sentinel-managed automatic failover in 10K QPS. The L1 cache is the most effective lever — it eliminates the hot key problem entirely for the highest-traffic keys.
+#### Deep dive 2: LRU eviction — O(1) get and O(1) evict with DLL + HashMap
+> [!CAUTION]
+> **🔴 Weak** — on every get, scan all entries to find the least recently used one to evict. O(N) eviction — unacceptable at any meaningful cache size
+>
+> [!WARNING]
+> **🟡 Strong** — doubly-linked list + HashMap. HashMap stores (key → DLL node) for O(1) lookup. DLL maintains recency order: head = most recently used, tail = least recently used. get: HashMap lookup O(1), move node to head O(1). evict: remove tail O(1), delete from HashMap O(1). put: insert at head O(1), evict tail if at capacity O(1)
+>
+> [!TIP]
+> **🟢 Staff+** — implementation: the DLL needs sentinel head and tail nodes to eliminate edge cases (empty list, single element). On get, moving a node from its current position requires unlinking from prev/next and relinking at head — all O(1) pointer operations. LFU as an alternative: tracks access frequency, evicts least frequently used. Better for stable hot/cold workloads but has O(log N) update cost and poor cold-start behavior (new popular key starts at frequency 1, immediately evictable)
 
-Why the deep dives connect to the scaling problem: "Coordination across machines with low latency." Deep dive 1 solves distribution. Deep dive 2 solves eviction. Deep dive 3 solves availability and hot spots.
+
+#### Deep dive 3: Replication and failure handling — availability without sacrificing latency
+> [!CAUTION]
+> **🔴 Weak** — replicate synchronously — every write waits for replica ACK before confirming to the client. Correct, but doubles write latency
+>
+> [!WARNING]
+> **🟡 Strong** — async replication for a cache. Cache data is derived — it can be rebuilt from the source of truth (the DB). Losing the last few milliseconds of writes on primary failure is acceptable; the data is just re-fetched on the next miss. Primary + 1-2 replicas per shard, async replication, Sentinel-managed automatic failover in <30 seconds
+>
+> [!TIP]
+> **🟢 Staff+** — hot key handling: one key accessed 1M times/sec overloads one shard regardless of replication. Two layers: (1) local in-process L1 cache on each app server — top 100 keys, 100ms TTL, zero network hops; (2) read replicas for detected hot keys. Hot key detection: monitor per-key access frequency, alert at >10K QPS. The L1 cache is the most effective lever — it eliminates the hot key problem entirely for the highest-traffic keys
+
+
+_Why the deep dives connect to the scaling problem: "Coordination across machines with low latency." Deep dive 1 solves distribution. Deep dive 2 solves eviction. Deep dive 3 solves availability and hot spots._
 
 </details>
 

@@ -265,13 +265,42 @@ A good interview summary is this. Rate limiting is hard to scale because it need
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Algorithm selection — token bucket vs. sliding window vs. fixed window
-Weak answer: use fixed window counting — INCR a key, expire at the window boundary. Strong answer: the algorithm choice has real operational tradeoffs, not just theoretical ones. Fixed window: simplest (INCR key, expire at window boundary), but the "double spend" attack — a burst of N requests at window T-1 and N requests at window T+1 = 2N requests in a 2-second window while the limit is N per window. Sliding window counter: curr_window_count + (prev_window_count × fraction_of_prev_window_elapsed) ≈ accurate sliding window at low memory cost. Token bucket: refill rate R tokens per second, cost 1 per request, bucket size B allows bursts up to B. Leaky bucket: queue requests and process at fixed rate — smoothest, but adds latency. Staff+ recommendation: sliding window counter for most API rate limiting (accurate, cheap). Token bucket for APIs that explicitly want to allow short bursts (e.g., batch endpoints). Fixed window only for very simple use cases where boundary bursts are acceptable. The algorithm choice should be justified against your NFRs — don't just name it.
+#### Deep dive 1: Algorithm selection — token bucket vs. sliding window vs. fixed window
+> [!CAUTION]
+> **🔴 Weak** — use fixed window counting — INCR a key, expire at the window boundary
+>
+> [!WARNING]
+> **🟡 Strong** — the algorithm choice has real operational tradeoffs, not just theoretical ones. Fixed window: simplest (INCR key, expire at window boundary), but the "double spend" attack — a burst of N requests at window T-1 and N requests at window T+1 = 2N requests in a 2-second window while the limit is N per window. Sliding window counter: curr_window_count + (prev_window_count × fraction_of_prev_window_elapsed) ≈ accurate sliding window at low memory cost. Token bucket: refill rate R tokens per second, cost 1 per request, bucket size B allows bursts up to B. Leaky bucket: queue requests and process at fixed rate — smoothest, but adds latency
+>
+> [!TIP]
+> **🟢 Staff+** — sliding window counter for most API rate limiting (accurate, cheap). Token bucket for APIs that explicitly want to allow short bursts (e.g., batch endpoints). Fixed window only for very simple use cases where boundary bursts are acceptable. The algorithm choice should be justified against your NFRs — don't just name it
 
-Deep dive 2: Distributed atomicity — why Lua scripts are mandatory
-The race condition: two servers both read the same counter (value: 999), both check 999  protection. (2) Fail closed — deny all requests with 429. Better for auth endpoints where one compromised request is worse than a temporary outage. (3) Local in-process fallback — each app server maintains its own token bucket. Allows N × (num_servers) total requests instead of N, but prevents total failure. Staff+ design: the failure mode should be a configuration option, not a code decision. Different endpoints have different failure mode requirements. The rate limiter must be explicit about which mode it's in and expose this via metrics. Additionally: Redis Sentinel for HA (automatic failover in <30s); circuit breaker pattern at the rate limiter client so a slow Redis doesn't add latency to every API request.
 
-Why the deep dives connect to the scaling problem: "Fast per-request shared counter decisions." Deep dive 1 solves algorithm correctness. Deep dive 2 solves distributed atomicity. Deep dive 3 solves failure handling.
+#### Deep dive 2: Distributed atomicity — why Lua scripts are mandatory
+_The race condition: two servers both read the same counter (value: 999), both check 999 < 1000 (pass), both increment to 1000. User gets 2× their quota. The naive GET → check → INCR is broken_
+
+> [!CAUTION]
+> **🔴 Weak** — use Redis transactions (MULTI/EXEC)
+>
+> [!WARNING]
+> **🟡 Strong** — Redis Lua scripts — the script executes atomically on the Redis server; no other command can run between any two lines of the Lua script. The script: (1) LOLWUT or EXISTS to check the key, (2) GET the current count, (3) if count < limit, INCR and return allowed, else return denied. All as one atomic operation
+>
+> [!TIP]
+> **🟢 Staff+** — why not MULTI/EXEC? MULTI/EXEC is optimistic — if another client modifies the key between WATCH and EXEC, the transaction fails and must retry. Under high concurrency this creates a hot retry loop. Lua is unconditional — no retry needed. INCR alone is atomic too, but only for the increment — the conditional check requires Lua
+
+
+#### Deep dive 3: Failure modes and degradation strategy
+> [!CAUTION]
+> **🔴 Weak** — fail closed — return 429 to all requests when Redis is down
+>
+> [!WARNING]
+> **🟡 Strong** — what happens when Redis is unavailable? This is the question that separates senior from staff. Options: (1) fail open — allow all requests. Better for user-facing APIs where availability > protection. (2) Fail closed — deny all requests with 429. Better for auth endpoints where one compromised request is worse than a temporary outage. (3) Local in-process fallback — each app server maintains its own token bucket. Allows N × (num_servers) total requests instead of N, but prevents total failure
+>
+> [!TIP]
+> **🟢 Staff+** — design: the failure mode should be a configuration option, not a code decision. Different endpoints have different failure mode requirements. The rate limiter must be explicit about which mode it's in and expose this via metrics. Additionally: Redis Sentinel for HA (automatic failover in <30s); circuit breaker pattern at the rate limiter client so a slow Redis doesn't add latency to every API request
+
+
+_Why the deep dives connect to the scaling problem: "Fast per-request shared counter decisions." Deep dive 1 solves algorithm correctness. Deep dive 2 solves distributed atomicity. Deep dive 3 solves failure handling._
 
 </details>
 

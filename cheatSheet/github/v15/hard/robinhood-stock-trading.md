@@ -288,16 +288,42 @@ A good mental model is this. Robinhood is hard because it is part realtime syste
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Idempotency — preventing duplicate orders under network retries
-Weak answer: check if a similar order exists before placing a new one. Strong answer: the hardest financial correctness problem: a network timeout means the client doesn't know if the order went through. If the client retries, it might place two orders. At $50 average trade value and 58 orders/second, a 1% duplicate rate = $29,000/second in double-charges. Unacceptable. Staff+ design: client-generated idempotency key (UUID v4) included in every order request. Server logic: (1) check if idempotency_key exists in DB — if yes, return the cached response (no new order created). (2) If no, proceed: insert idempotency_key record + create order in one ACID transaction. On broker API call: include the idempotency_key as the broker's own idempotency parameter (Stripe, Alpaca, etc. support this). If broker returns success + idempotency key matches: return cached success. If broker returns error: return cached error. The idempotency record must be stored BEFORE the broker API call — if stored after, a crash between broker success and DB write results in a duplicate on retry. Timing: store idempotency key as PENDING, call broker, update to COMPLETED/FAILED. On retry: if PENDING state found, check broker directly (re-query by the same idempotency key).
+#### Deep dive 1: Idempotency — preventing duplicate orders under network retries
+> [!CAUTION]
+> **🔴 Weak** — check if a similar order exists before placing a new one
+>
+> [!WARNING]
+> **🟡 Strong** — the hardest financial correctness problem: a network timeout means the client doesn't know if the order went through. If the client retries, it might place two orders. At $50 average trade value and 58 orders/second, a 1% duplicate rate = $29,000/second in double-charges. Unacceptable
+>
+> [!TIP]
+> **🟢 Staff+** — design: client-generated idempotency key (UUID v4) included in every order request. Server logic: (1) check if idempotency_key exists in DB — if yes, return the cached response (no new order created). (2) If no, proceed: insert idempotency_key record + create order in one ACID transaction. On broker API call: include the idempotency_key as the broker's own idempotency parameter (Stripe, Alpaca, etc. support this). If broker returns success + idempotency key matches: return cached success. If broker returns error: return cached error. The idempotency record must be stored BEFORE the broker API call — if stored after, a crash between broker success and DB write results in a duplicate on retry. Timing: store idempotency key as PENDING, call broker, update to COMPLETED/FAILED. On retry: if PENDING state found, check broker directly (re-query by the same idempotency key)
 
-Deep dive 2: Event sourcing — the immutable ledger for financial compliance
-Weak answer: maintain a balance column, UPDATE on every debit and credit. Strong answer: a mutable balance field (UPDATE accounts SET balance = balance - 100 WHERE id=?) fails regulatory requirements: you cannot reconstruct the history of how the balance arrived at its current value. Event sourcing: every financial movement is an immutable append-only event row: (account_id, event_type, amount, currency, timestamp, order_id, description). The current balance is computed as the sum of all events for an account. Staff+ optimization: materializing the balance. Recomputing from the full event log on every balance check would be O(N) per query. Solution: maintain a checkpoint table (account_id, balance_as_of_timestamp) updated periodically (e.g., end of day). For live balance: checkpoint + sum of events since checkpoint = current balance. The checkpoint is always derivable from the event log — it's a cache, not the source of truth. If the checkpoint is wrong: recompute from event log (always possible, always correct). Regulatory requirement: event log must be immutable (no UPDATE or DELETE), retained for 7 years.
 
-Deep dive 3: Market data fan-out — high-frequency prices to millions of users
-Exchange feed delivers 10,000 price updates/second for thousands of tickers. Distributing this to 1M users watching various tickers is a fan-out problem. Weak answer: WebSocket to every user. Strong answer: topic-based pub/sub with ticker as the topic. Architecture: Market Data Service subscribes to exchange feed → normalizes updates → publishes to Kafka topics (one per ticker). App servers subscribe to tickers that their connected users are watching. On price update: app server pushes to relevant user WebSocket connections. Staff+ detail: app server maintains an in-memory map of (ticker → [user_connection_ids]). On price update event: look up connections for that ticker, push to each. This is a local fan-out within one server — no cross-server coordination needed because connections are affined by ticker. Hot tickers (GME, AAPL during earnings): the app server handling those users gets more messages but handles them without cross-server coordination. The Kafka topic for hot tickers may need multiple partitions to distribute ingestion load.
+#### Deep dive 2: Event sourcing — the immutable ledger for financial compliance
+> [!CAUTION]
+> **🔴 Weak** — maintain a balance column, UPDATE on every debit and credit
+>
+> [!WARNING]
+> **🟡 Strong** — a mutable balance field (UPDATE accounts SET balance = balance - 100 WHERE id=?) fails regulatory requirements: you cannot reconstruct the history of how the balance arrived at its current value. Event sourcing: every financial movement is an immutable append-only event row: (account_id, event_type, amount, currency, timestamp, order_id, description). The current balance is computed as the sum of all events for an account
+>
+> [!TIP]
+> **🟢 Staff+** — materializing the balance. Recomputing from the full event log on every balance check would be O(N) per query. Solution: maintain a checkpoint table (account_id, balance_as_of_timestamp) updated periodically (e.g., end of day). For live balance: checkpoint + sum of events since checkpoint = current balance. The checkpoint is always derivable from the event log — it's a cache, not the source of truth. If the checkpoint is wrong: recompute from event log (always possible, always correct). Regulatory requirement: event log must be immutable (no UPDATE or DELETE), retained for 7 years
 
-Why the deep dives connect to the scaling problem: "Real-time system plus financial workflow engine." Deep dive 1 solves order correctness. Deep dive 2 solves auditability. Deep dive 3 solves market data distribution.
+
+#### Deep dive 3: Market data fan-out — high-frequency prices to millions of users
+_Exchange feed delivers 10,000 price updates/second for thousands of tickers. Distributing this to 1M users watching various tickers is a fan-out problem_
+
+> [!CAUTION]
+> **🔴 Weak** — WebSocket to every user
+>
+> [!WARNING]
+> **🟡 Strong** — topic-based pub/sub with ticker as the topic. Architecture: Market Data Service subscribes to exchange feed → normalizes updates → publishes to Kafka topics (one per ticker). App servers subscribe to tickers that their connected users are watching. On price update: app server pushes to relevant user WebSocket connections
+>
+> [!TIP]
+> **🟢 Staff+** — app server maintains an in-memory map of (ticker → [user_connection_ids]). On price update event: look up connections for that ticker, push to each. This is a local fan-out within one server — no cross-server coordination needed because connections are affined by ticker. Hot tickers (GME, AAPL during earnings): the app server handling those users gets more messages but handles them without cross-server coordination. The Kafka topic for hot tickers may need multiple partitions to distribute ingestion load
+
+
+_Why the deep dives connect to the scaling problem: "Real-time system plus financial workflow engine." Deep dive 1 solves order correctness. Deep dive 2 solves auditability. Deep dive 3 solves market data distribution._
 
 </details>
 

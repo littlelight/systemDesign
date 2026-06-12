@@ -204,17 +204,56 @@ ID generation is embarrassingly parallel once worker_ids are assigned. The coord
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: 64-bit layout and throughput math
-12-bit sequence = 4096 IDs/ms per worker. 10-bit worker = 1024 machines. Cluster theoretical max ≈ 4M IDs/ms. Weak answer: use UUID. Strong answer: explain bit allocation and why sortability helps DB indexing.
+#### Deep dive 1: 64-bit layout and throughput math
+_12-bit sequence = 4096 IDs/ms per worker. 10-bit worker = 1024 machines. Cluster theoretical max ≈ 4M IDs/ms_
 
-Deep dive 2: Clock drift and backward time
-NTP sync required. If current_ms < last_ms: wait or error. Never reuse timestamp+sequence combo. Staff+ detail: leap seconds and VM migration can move clock backward — monitor and alert.
+> [!CAUTION]
+> **🔴 Weak** — use UUID
+>
+> [!WARNING]
+> **🟡 Strong** — explain bit allocation and why sortability helps DB indexing
+>
+> [!TIP]
+> **🟢 Staff+** — Name the metric you'd alert on and when you'd revisit this design.
 
-Deep dive 3: Worker ID coordination
-ZooKeeper ephemeral sequential nodes assign worker_id. On crash, ID reclaimed after session timeout. Alternative: DB lease table with heartbeat — slower failover.
 
-Deep dive 4: Multi-datacenter IDs
-Per-DC worker_id ranges avoid cross-DC ZK dependency. Or dedicated ID service per region with DC bits in layout.
+#### Deep dive 2: Clock drift and backward time
+_NTP sync required. If current_ms < last_ms: wait or error. Never reuse timestamp+sequence combo_
+
+> [!CAUTION]
+> **🔴 Weak** — Use system clock on each machine — NTP is optional.
+>
+> [!WARNING]
+> **🟡 Strong** — NTP sync required. If current_ms < last_ms: wait or error. Never reuse timestamp+sequence combo
+>
+> [!TIP]
+> **🟢 Staff+** — leap seconds and VM migration can move clock backward — monitor and alert
+
+
+#### Deep dive 3: Worker ID coordination
+_ZooKeeper ephemeral sequential nodes assign worker_id. On crash, ID reclaimed after session timeout. Alternative: DB lease table with heartbeat — slower failover_
+
+> [!CAUTION]
+> **🔴 Weak** — Pick a random worker ID at process start.
+>
+> [!WARNING]
+> **🟡 Strong** — ZooKeeper ephemeral sequential nodes assign worker_id. On crash, ID reclaimed after session timeout. Alternative: DB lease table with heartbeat — slower failover
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Multi-datacenter IDs
+_Per-DC worker_id ranges avoid cross-DC ZK dependency. Or dedicated ID service per region with DC bits in layout_
+
+> [!CAUTION]
+> **🔴 Weak** — UUID v4 everywhere — collisions are negligible.
+>
+> [!WARNING]
+> **🟡 Strong** — Per-DC worker_id ranges avoid cross-DC ZK dependency. Or dedicated ID service per region with DC bits in layout
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

@@ -199,17 +199,54 @@ Billions of messages/day with large attachments — sharding and blob offload ar
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Storage model
-Weak: one row per email in SQL. Strong: Cassandra partition key = user_id, cluster key = timestamp+id. Staff+: separate hot (inbox) and cold (archive) tiers.
+#### Deep dive 1: Storage model
+> [!CAUTION]
+> **🔴 Weak** — one row per email in SQL
+>
+> [!WARNING]
+> **🟡 Strong** — Cassandra partition key = user_id, cluster key = timestamp+id. Staff+: separate hot (inbox) and cold (archive) tiers
+>
+> [!TIP]
+> **🟢 Staff+** — Name the metric you'd alert on and when you'd revisit this design.
 
-Deep dive 2: Search
-Inverted index per user or global with user_id filter. Reindex pipeline from mail log for recovery.
 
-Deep dive 3: SMTP reliability
-Outbound queue in Kafka. Multiple MX retries. Bounce handling updates recipient reputation.
+#### Deep dive 2: Search
+_Inverted index per user or global with user_id filter. Reindex pipeline from mail log for recovery_
 
-Deep dive 4: Spam/abuse
-Feature extraction at edge. ML model ensemble. User feedback loop for false positives.
+> [!CAUTION]
+> **🔴 Weak** — Rebuild the full index nightly — no incremental updates.
+>
+> [!WARNING]
+> **🟡 Strong** — Inverted index per user or global with user_id filter. Reindex pipeline from mail log for recovery
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: SMTP reliability
+_Outbound queue in Kafka. Multiple MX retries. Bounce handling updates recipient reputation_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify smtp reliability — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Outbound queue in Kafka. Multiple MX retries. Bounce handling updates recipient reputation
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Spam/abuse
+_Feature extraction at edge. ML model ensemble. User feedback loop for false positives_
+
+> [!CAUTION]
+> **🔴 Weak** — Query the database on every feed request.
+>
+> [!WARNING]
+> **🟡 Strong** — Feature extraction at edge. ML model ensemble. User feedback loop for false positives
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

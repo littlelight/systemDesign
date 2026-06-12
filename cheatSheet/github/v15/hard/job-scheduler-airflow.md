@@ -284,16 +284,42 @@ A good interview summary is this. Job Scheduler is hard to scale because it comb
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Leader election — preventing double-dispatch with ZooKeeper/etcd
-Weak answer: run multiple scheduler instances in parallel for redundancy. Strong answer: two scheduler instances running simultaneously would both scan the same job table and enqueue the same jobs twice. Workers execute jobs twice → idempotency violations, corrupted state, duplicate emails, double payments. Weak answer: use a DB lock. Strong answer: ZooKeeper or etcd leader election. etcd approach: all scheduler instances compete to create an ephemeral key /scheduler/leader with their instance ID. The TTL is 15 seconds (heartbeat interval). Only one instance can create the key — that instance is the leader. Other instances watch the key and wait. If the leader crashes: key expires in 15 seconds, election re-runs. Staff+ comparison: DB-based election (UPDATE schedulers SET is_leader=1, heartbeat_at=now() WHERE id=? AND is_leader=0) works but has 30-60 second failover (depends on heartbeat check frequency) and adds polling load to PG. etcd/ZooKeeper: event-driven (watch-based), <1 second failover, designed for coordination. The choice is operational: if you already have etcd in your stack (Kubernetes uses it), use it. If not, DB-based is acceptable.
+#### Deep dive 1: Leader election — preventing double-dispatch with ZooKeeper/etcd
+> [!CAUTION]
+> **🔴 Weak** — run multiple scheduler instances in parallel for redundancy
+>
+> [!WARNING]
+> **🟡 Strong** — two scheduler instances running simultaneously would both scan the same job table and enqueue the same jobs twice. Workers execute jobs twice → idempotency violations, corrupted state, duplicate emails, double payments. Weak answer: use a DB lock. Strong answer: ZooKeeper or etcd leader election. etcd approach: all scheduler instances compete to create an ephemeral key /scheduler/leader with their instance ID. The TTL is 15 seconds (heartbeat interval). Only one instance can create the key — that instance is the leader. Other instances watch the key and wait. If the leader crashes: key expires in 15 seconds, election re-runs
+>
+> [!TIP]
+> **🟢 Staff+** — DB-based election (UPDATE schedulers SET is_leader=1, heartbeat_at=now() WHERE id=? AND is_leader=0) works but has 30-60 second failover (depends on heartbeat check frequency) and adds polling load to PG. etcd/ZooKeeper: event-driven (watch-based), <1 second failover, designed for coordination. The choice is operational: if you already have etcd in your stack (Kubernetes uses it), use it. If not, DB-based is acceptable
 
-Deep dive 2: DAG dependency enforcement — correct job ordering at scale
-Airflow-style DAGs: task B can only run after task A succeeds. At 10M executions/day with complex DAGs (some with 50+ tasks), the scheduler must efficiently find tasks that are ready to run. Weak answer: scan all tasks periodically. Strong answer: event-driven dependency resolution. When a task completes: publish a TASK_COMPLETED event. The scheduler consumes this event, checks if all dependencies for downstream tasks are now satisfied, and enqueues ready tasks. Dependency check: SELECT count(*) FROM task_instances WHERE dag_run_id=? AND task_id IN (upstream_tasks) AND status != 'SUCCESS'. If count = 0: all upstreams succeeded, enqueue the task. Staff+ detail: this check is a hotspot under high fan-out DAGs (one task → 100 downstream tasks). Batch the dependency check: on TASK_COMPLETED, add the dag_run_id to a Redis set. A low-frequency background scanner processes the set, checks all downstream tasks for that dag_run, enqueues ready ones. Reduces per-event DB queries from O(downstream_tasks) to O(1) per event. At-least-once delivery: if the dependency check fails (DB unavailable), the task remains in PENDING state. The periodic scanner catches it on the next cycle.
 
-Deep dive 3: Fault tolerance — heartbeat timeout, at-least-once, and idempotent workers
-Weak answer: mark a job as failed only when the worker explicitly reports failure. Strong answer: a worker executing a job may crash mid-execution. The job must be retried. Staff+ at-least-once design: worker sends heartbeat every 30 seconds (UPDATE task_instances SET last_heartbeat=now() WHERE id=? AND status='RUNNING'). Scheduler scans for stale heartbeats: SELECT id FROM task_instances WHERE status='RUNNING' AND last_heartbeat < now() - INTERVAL '60s'. Re-enqueues timed-out tasks. This gives at-least-once execution — the job may run twice if the worker crashes and recovers but the heartbeat was temporarily delayed. Exactly-once requires idempotent jobs: a job that can be safely run twice must produce the same result (send-email with deduplication ID, db-insert with upsert, file-generation with atomic rename). Staff+ design principle: the scheduler guarantees at-least-once; job authors are responsible for idempotency. This is an explicit contract documented in the platform's API. For non-idempotent jobs: add an explicit "already-ran" check at job start (SELECT 1 FROM job_executions WHERE job_id=? AND execution_date=? AND status='SUCCEEDED'). Dead letter queue for jobs that fail beyond max_retries — never silently discard.
+#### Deep dive 2: DAG dependency enforcement — correct job ordering at scale
+_Airflow-style DAGs: task B can only run after task A succeeds. At 10M executions/day with complex DAGs (some with 50+ tasks), the scheduler must efficiently find tasks that are ready to run_
 
-Why the deep dives connect to the scaling problem: "Time-based querying, high-throughput dispatch, failure handling." Each deep dive addresses one constraint.
+> [!CAUTION]
+> **🔴 Weak** — scan all tasks periodically
+>
+> [!WARNING]
+> **🟡 Strong** — event-driven dependency resolution. When a task completes: publish a TASK_COMPLETED event. The scheduler consumes this event, checks if all dependencies for downstream tasks are now satisfied, and enqueues ready tasks. Dependency check: SELECT count(*) FROM task_instances WHERE dag_run_id=? AND task_id IN (upstream_tasks) AND status != 'SUCCESS'. If count = 0: all upstreams succeeded, enqueue the task
+>
+> [!TIP]
+> **🟢 Staff+** — this check is a hotspot under high fan-out DAGs (one task → 100 downstream tasks). Batch the dependency check: on TASK_COMPLETED, add the dag_run_id to a Redis set. A low-frequency background scanner processes the set, checks all downstream tasks for that dag_run, enqueues ready ones. Reduces per-event DB queries from O(downstream_tasks) to O(1) per event. At-least-once delivery: if the dependency check fails (DB unavailable), the task remains in PENDING state. The periodic scanner catches it on the next cycle
+
+
+#### Deep dive 3: Fault tolerance — heartbeat timeout, at-least-once, and idempotent workers
+> [!CAUTION]
+> **🔴 Weak** — mark a job as failed only when the worker explicitly reports failure
+>
+> [!WARNING]
+> **🟡 Strong** — a worker executing a job may crash mid-execution. The job must be retried
+>
+> [!TIP]
+> **🟢 Staff+** — at-least-once design: worker sends heartbeat every 30 seconds (UPDATE task_instances SET last_heartbeat=now() WHERE id=? AND status='RUNNING'). Scheduler scans for stale heartbeats: SELECT id FROM task_instances WHERE status='RUNNING' AND last_heartbeat < now() - INTERVAL '60s'. Re-enqueues timed-out tasks. This gives at-least-once execution — the job may run twice if the worker crashes and recovers but the heartbeat was temporarily delayed. Exactly-once requires idempotent jobs: a job that can be safely run twice must produce the same result (send-email with deduplication ID, db-insert with upsert, file-generation with atomic rename). Staff+ design principle: the scheduler guarantees at-least-once; job authors are responsible for idempotency. This is an explicit contract documented in the platform's API. For non-idempotent jobs: add an explicit "already-ran" check at job start (SELECT 1 FROM job_executions WHERE job_id=? AND execution_date=? AND status='SUCCEEDED'). Dead letter queue for jobs that fail beyond max_retries — never silently discard
+
+
+_Why the deep dives connect to the scaling problem: "Time-based querying, high-throughput dispatch, failure handling." Each deep dive addresses one constraint._
 
 </details>
 

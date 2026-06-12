@@ -269,16 +269,46 @@ That creates three main scaling pain points. First, the event page and seat map 
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Seat reservation — preventing double booking under extreme contention
-This is the defining hard problem for Ticketmaster. The scenario: Taylor Swift onsale, 2M users, 50K seats, all trying to book in 60 seconds. Weak answer: database SELECT + UPDATE. Strong answer: Redis SETNX per seat_id with 10-minute TTL creates a soft hold atomically (first caller wins, Redis is single-threaded so no race). On payment success, a short PG transaction commits the hard booking. Staff+ detail: the two-phase design explicitly separates hold duration (user has time to pay) from commit duration (DB transaction is < 100ms). Never hold a DB transaction open for 10 minutes — lock contention at scale would serialize all booking requests. TTL auto-release eliminates abandoned carts without any cleanup job. Key failure mode to proactively surface: Redis hold state and PG booking state can diverge if a crash occurs between them — on recovery, reconcile by querying PG for completed payments and releasing any Redis holds for unpaid seats.
+#### Deep dive 1: Seat reservation — preventing double booking under extreme contention
+_This is the defining hard problem for Ticketmaster. The scenario: Taylor Swift onsale, 2M users, 50K seats, all trying to book in 60 seconds_
 
-Deep dive 2: Seat map real-time updates — SSE fan-out under spike traffic
-During an onsale, users need to see seat availability update in near-real-time as others hold and release seats. Weak answer: HTTP polling every 5 seconds. Strong answer: SSE for server-push updates, Kafka for event distribution, delivery servers partitioned by event_id. Staff+ detail: SSE fan-out math matters — 2M users watching the same event × 1 update/hold event = massive write amplification. Mitigation: (1) coalescing — batch seat status changes into 500ms update windows rather than per-event pushes; (2) broadcast the full seat map diff rather than individual seat changes; (3) for extreme events, short TTL CDN caching of the seat map image reduces real-time update pressure. The seat map itself is event-specific static data — cache aggressively. Only availability state is dynamic.
+> [!CAUTION]
+> **🔴 Weak** — database SELECT + UPDATE
+>
+> [!WARNING]
+> **🟡 Strong** — Redis SETNX per seat_id with 10-minute TTL creates a soft hold atomically (first caller wins, Redis is single-threaded so no race). On payment success, a short PG transaction commits the hard booking
+>
+> [!TIP]
+> **🟢 Staff+** — the two-phase design explicitly separates hold duration (user has time to pay) from commit duration (DB transaction is < 100ms). Never hold a DB transaction open for 10 minutes — lock contention at scale would serialize all booking requests. TTL auto-release eliminates abandoned carts without any cleanup job. Key failure mode to proactively surface: Redis hold state and PG booking state can diverge if a crash occurs between them — on recovery, reconcile by querying PG for completed payments and releasing any Redis holds for unpaid seats
 
-Deep dive 3: Virtual waiting room — protecting the system under extreme spikes
-Without a queue, 2M simultaneous users hit booking flow in 60 seconds = 33K booking QPS. Weak answer: scale horizontally. Strong answer: virtual waiting room caps entry into booking flow at a rate the system can handle (e.g., 5K users/minute). Ticket purchasing is a funnel: users in waiting room → hold seat → payment → confirmation. The queue smooths the spike. Staff+ design: waiting room assigns users a randomized position (not FIFO — prevents queue jumping bots who connect milliseconds early). Position is stored in Redis sorted set with score = random. Users poll their position. When it's their turn, they receive a signed token that grants entry to booking flow (token has 5-minute TTL). The token prevents users from sharing their queue position. Estimate: with 2M users and a 5K/min entry rate, median wait ≈ 200 minutes. For popular events this is expected and communicated to users upfront.
 
-Why the deep dives connect to the scaling problem: "Extreme contention at a few hot seats." Deep dive 1 solves booking correctness. Deep dive 2 solves real-time UX. Deep dive 3 solves traffic smoothing.
+#### Deep dive 2: Seat map real-time updates — SSE fan-out under spike traffic
+_During an onsale, users need to see seat availability update in near-real-time as others hold and release seats_
+
+> [!CAUTION]
+> **🔴 Weak** — HTTP polling every 5 seconds
+>
+> [!WARNING]
+> **🟡 Strong** — SSE for server-push updates, Kafka for event distribution, delivery servers partitioned by event_id
+>
+> [!TIP]
+> **🟢 Staff+** — SSE fan-out math matters — 2M users watching the same event × 1 update/hold event = massive write amplification. Mitigation: (1) coalescing — batch seat status changes into 500ms update windows rather than per-event pushes; (2) broadcast the full seat map diff rather than individual seat changes; (3) for extreme events, short TTL CDN caching of the seat map image reduces real-time update pressure. The seat map itself is event-specific static data — cache aggressively. Only availability state is dynamic
+
+
+#### Deep dive 3: Virtual waiting room — protecting the system under extreme spikes
+_Without a queue, 2M simultaneous users hit booking flow in 60 seconds = 33K booking QPS_
+
+> [!CAUTION]
+> **🔴 Weak** — scale horizontally
+>
+> [!WARNING]
+> **🟡 Strong** — virtual waiting room caps entry into booking flow at a rate the system can handle (e.g., 5K users/minute). Ticket purchasing is a funnel: users in waiting room → hold seat → payment → confirmation. The queue smooths the spike
+>
+> [!TIP]
+> **🟢 Staff+** — design: waiting room assigns users a randomized position (not FIFO — prevents queue jumping bots who connect milliseconds early). Position is stored in Redis sorted set with score = random. Users poll their position. When it's their turn, they receive a signed token that grants entry to booking flow (token has 5-minute TTL). The token prevents users from sharing their queue position. Estimate: with 2M users and a 5K/min entry rate, median wait ≈ 200 minutes. For popular events this is expected and communicated to users upfront
+
+
+_Why the deep dives connect to the scaling problem: "Extreme contention at a few hot seats." Deep dive 1 solves booking correctness. Deep dive 2 solves real-time UX. Deep dive 3 solves traffic smoothing._
 
 </details>
 

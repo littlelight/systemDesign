@@ -296,16 +296,40 @@ A good interview summary is this. Price Tracking Service is hard to scale becaus
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Data collection strategy — extension + crawler with trust-but-verify
-Weak answer: crawl Amazon every hour for all tracked products. Strong answer: two-tier collection — Chrome extension gives real-time prices for user-active products at zero crawl cost; crawler covers the long tail at lower frequency. The extension is the primary path for the top 1M products users actually care about. Staff+ detail: extension data can be wrong — A/B test prices, regional variants, scraping bugs. Fast-accept for display, but flag price changes >50% from previous as anomalies and trigger a priority crawler re-fetch before storing permanently. This two-layer validation gives low latency for normal updates and high confidence for outliers.
+#### Deep dive 1: Data collection strategy — extension + crawler with trust-but-verify
+> [!CAUTION]
+> **🔴 Weak** — crawl Amazon every hour for all tracked products
+>
+> [!WARNING]
+> **🟡 Strong** — two-tier collection — Chrome extension gives real-time prices for user-active products at zero crawl cost; crawler covers the long tail at lower frequency. The extension is the primary path for the top 1M products users actually care about
+>
+> [!TIP]
+> **🟢 Staff+** — extension data can be wrong — A/B test prices, regional variants, scraping bugs. Fast-accept for display, but flag price changes >50% from previous as anomalies and trigger a priority crawler re-fetch before storing permanently. This two-layer validation gives low latency for normal updates and high confidence for outliers
 
-Deep dive 2: Event-driven alert evaluation — Kafka over polling
-Weak answer: cron job every 5 minutes queries all 100M active alerts for products that changed price. This is O(active_alerts) per run = 333K DB queries per second just for alerts. Unacceptable. Strong answer: event-driven evaluation. When a price update is stored, publish a Kafka event {product_id, old_price, new_price}. Alert service consumes the event and evaluates only alerts for that product_id. At 58 changes/sec × avg 5 alerts/product = 290 evaluations/sec — 1000× more efficient. Staff+ detail: the dedup contract — don't re-alert if the price hasn't crossed the threshold fresh. Track last_alert_sent_at per alert; require the price to recover above threshold and drop below again before re-alerting. Without this, a price hovering at the threshold triggers a new alert on every crawl cycle.
 
-Deep dive 3: TSDB design for price history charts
-Weak answer: store every price event in PostgreSQL, query by product_id and time range. Strong answer: InfluxDB or TimescaleDB — append-only, time-partitioned, columnar compression. But the real win is multi-resolution rollups: raw price events for all-time history, daily min/max/avg for chart display. 7-day view uses raw data; 90-day uses daily rollup; 3-year uses weekly rollup. Staff+ detail: pre-compute rollups with TimescaleDB continuous aggregates — they update automatically on every insert, so a 3-year chart query fetches 156 weekly rows instead of 26K raw events. 170× faster query with no visible chart difference at typical chart widths.
+#### Deep dive 2: Event-driven alert evaluation — Kafka over polling
+> [!CAUTION]
+> **🔴 Weak** — cron job every 5 minutes queries all 100M active alerts for products that changed price. This is O(active_alerts) per run = 333K DB queries per second just for alerts. Unacceptable
+>
+> [!WARNING]
+> **🟡 Strong** — event-driven evaluation. When a price update is stored, publish a Kafka event {product_id, old_price, new_price}. Alert service consumes the event and evaluates only alerts for that product_id. At 58 changes/sec × avg 5 alerts/product = 290 evaluations/sec — 1000× more efficient
+>
+> [!TIP]
+> **🟢 Staff+** — the dedup contract — don't re-alert if the price hasn't crossed the threshold fresh. Track last_alert_sent_at per alert; require the price to recover above threshold and drop below again before re-alerting. Without this, a price hovering at the threshold triggers a new alert on every crawl cycle
 
-Why the deep dives connect to the scaling problem: "Data collection at scale, event-driven processing, and efficient time-series queries." Each deep dive solves one challenge.
+
+#### Deep dive 3: TSDB design for price history charts
+> [!CAUTION]
+> **🔴 Weak** — store every price event in PostgreSQL, query by product_id and time range
+>
+> [!WARNING]
+> **🟡 Strong** — InfluxDB or TimescaleDB — append-only, time-partitioned, columnar compression. But the real win is multi-resolution rollups: raw price events for all-time history, daily min/max/avg for chart display. 7-day view uses raw data; 90-day uses daily rollup; 3-year uses weekly rollup
+>
+> [!TIP]
+> **🟢 Staff+** — pre-compute rollups with TimescaleDB continuous aggregates — they update automatically on every insert, so a 3-year chart query fetches 156 weekly rows instead of 26K raw events. 170× faster query with no visible chart difference at typical chart widths
+
+
+_Why the deep dives connect to the scaling problem: "Data collection at scale, event-driven processing, and efficient time-series queries." Each deep dive solves one challenge._
 
 </details>
 

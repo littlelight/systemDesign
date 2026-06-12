@@ -288,16 +288,40 @@ A fourth issue is storage shape. If you store every keystroke forever, loading a
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Operational Transform — the concurrency correctness algorithm
-Weak answer: last-write-wins — the most recent save overwrites earlier concurrent edits. Data loss is guaranteed for any concurrent editing session. Strong answer: Operational Transform. Every edit is an operation with type, position, content, and the document version the client was on when they made the edit. The OT server serializes all operations: when concurrent ops arrive, it transforms each op against the ops that happened since the client's version. Staff+ comparison: OT vs CRDT. OT requires a central server to serialize and transform — strong consistency, simpler for rich text. CRDT: commutative operations, no central server needed, better for offline-first. Yjs (YATA algorithm) is the production CRDT for rich text. OT is correct for server-authoritative systems; CRDT is correct for peer-to-peer. State this tradeoff explicitly — it's the question interviewers ask.
+#### Deep dive 1: Operational Transform — the concurrency correctness algorithm
+> [!CAUTION]
+> **🔴 Weak** — last-write-wins — the most recent save overwrites earlier concurrent edits. Data loss is guaranteed for any concurrent editing session
+>
+> [!WARNING]
+> **🟡 Strong** — Operational Transform. Every edit is an operation with type, position, content, and the document version the client was on when they made the edit. The OT server serializes all operations: when concurrent ops arrive, it transforms each op against the ops that happened since the client's version
+>
+> [!TIP]
+> **🟢 Staff+** — OT vs CRDT. OT requires a central server to serialize and transform — strong consistency, simpler for rich text. CRDT: commutative operations, no central server needed, better for offline-first. Yjs (YATA algorithm) is the production CRDT for rich text. OT is correct for server-authoritative systems; CRDT is correct for peer-to-peer. State this tradeoff explicitly — it's the question interviewers ask
 
-Deep dive 2: Document state persistence — snapshot + op log for bounded load time
-Weak answer: store every op in Cassandra, replay all ops on document load. For a document with 1M keystrokes, load time = time to replay 1M ops — unbounded and growing forever. Strong answer: periodic snapshots. Every 100 ops: write a full document snapshot to PostgreSQL. On load: fetch latest snapshot + ops since the snapshot. Load time is O(recent ops), not O(total history). Staff+ implementation detail: the snapshot interval is a tunable config, not a code constant. Large documents (100-page reports) need more frequent snapshots; small documents can go longer. The snapshot is always derivable from the op log — it's a cache, never the source of truth. If a snapshot is corrupted, you can always reconstruct from the full op log.
 
-Deep dive 3: Scaling beyond one OT server — document affinity and hot document handling
-Weak answer: shard the OT server horizontally — split documents across multiple OT servers for throughput. Strong answer: document affinity is mandatory. All ops for a single document must go to one OT server — distributed sharding across multiple servers for the same document requires cross-shard op ordering, which is the same problem OT was designed to solve. Consistent hash by doc_id routes all editors to the same server. Staff+ hot document handling: monitor concurrent_editors per document. When >50 concurrent editors: provision a dedicated OT server instance for that document, isolated from other docs. Primary + warm standby per hot document: standby replicates the op log from Cassandra and can promote in <10 seconds on primary failure. This gives hot document HA without sharding the OT logic.
+#### Deep dive 2: Document state persistence — snapshot + op log for bounded load time
+> [!CAUTION]
+> **🔴 Weak** — store every op in Cassandra, replay all ops on document load. For a document with 1M keystrokes, load time = time to replay 1M ops — unbounded and growing forever
+>
+> [!WARNING]
+> **🟡 Strong** — periodic snapshots. Every 100 ops: write a full document snapshot to PostgreSQL. On load: fetch latest snapshot + ops since the snapshot. Load time is O(recent ops), not O(total history)
+>
+> [!TIP]
+> **🟢 Staff+** — implementation detail: the snapshot interval is a tunable config, not a code constant. Large documents (100-page reports) need more frequent snapshots; small documents can go longer. The snapshot is always derivable from the op log — it's a cache, never the source of truth. If a snapshot is corrupted, you can always reconstruct from the full op log
 
-Why the deep dives connect to the scaling problem: "Concurrent write correctness, real-time stateful system, per-document hot spot." Each deep dive addresses one layer.
+
+#### Deep dive 3: Scaling beyond one OT server — document affinity and hot document handling
+> [!CAUTION]
+> **🔴 Weak** — shard the OT server horizontally — split documents across multiple OT servers for throughput
+>
+> [!WARNING]
+> **🟡 Strong** — document affinity is mandatory. All ops for a single document must go to one OT server — distributed sharding across multiple servers for the same document requires cross-shard op ordering, which is the same problem OT was designed to solve. Consistent hash by doc_id routes all editors to the same server
+>
+> [!TIP]
+> **🟢 Staff+** — hot document handling: monitor concurrent_editors per document. When >50 concurrent editors: provision a dedicated OT server instance for that document, isolated from other docs. Primary + warm standby per hot document: standby replicates the op log from Cassandra and can promote in <10 seconds on primary failure. This gives hot document HA without sharding the OT logic
+
+
+_Why the deep dives connect to the scaling problem: "Concurrent write correctness, real-time stateful system, per-document hot spot." Each deep dive addresses one layer._
 
 </details>
 

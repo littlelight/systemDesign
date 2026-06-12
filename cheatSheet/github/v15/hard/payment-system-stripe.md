@@ -287,16 +287,40 @@ A good interview summary is this. Payment Systems are hard to scale because they
 
 The three deep dives that matter most for this system, ordered by what interviewers probe hardest.
 
-Deep dive 1: Idempotency — preventing duplicate charges under network failures
-Weak answer: check if the payment already exists before processing. At 10K TPS with network timeouts, you can't reliably distinguish "never received" from "received and failed" without an idempotency key. Strong answer: client generates UUID before sending any payment request. Server stores the key with status=PENDING before calling the PSP. On retry: find PENDING key → query PSP by the same idempotency key → update to COMPLETED or FAILED. Staff+ sequence detail: storing the key AFTER the PSP call is a critical mistake. If the process crashes between PSP success and DB write, the retry has no key to find — it creates a new charge. Store the key BEFORE the PSP call unconditionally. On retry: find PENDING key, call PSP with same idempotency key (PSP deduplicates on its end too), update status. The entire chain is idempotent end-to-end. This sequence is the single most important correctness detail in payment system design.
+#### Deep dive 1: Idempotency — preventing duplicate charges under network failures
+> [!CAUTION]
+> **🔴 Weak** — check if the payment already exists before processing. At 10K TPS with network timeouts, you can't reliably distinguish "never received" from "received and failed" without an idempotency key
+>
+> [!WARNING]
+> **🟡 Strong** — client generates UUID before sending any payment request. Server stores the key with status=PENDING before calling the PSP. On retry: find PENDING key → query PSP by the same idempotency key → update to COMPLETED or FAILED
+>
+> [!TIP]
+> **🟢 Staff+** — sequence detail: storing the key AFTER the PSP call is a critical mistake. If the process crashes between PSP success and DB write, the retry has no key to find — it creates a new charge. Store the key BEFORE the PSP call unconditionally. On retry: find PENDING key, call PSP with same idempotency key (PSP deduplicates on its end too), update status. The entire chain is idempotent end-to-end. This sequence is the single most important correctness detail in payment system design
 
-Deep dive 2: Outbox pattern — guaranteed webhook delivery without distributed transactions
-Weak answer: after recording the payment in the DB, make an HTTP call to deliver the webhook. If the process crashes between DB commit and HTTP call, the webhook is lost. The merchant never learns about the payment. Strong answer: outbox pattern. In the same ACID transaction that records the payment: INSERT INTO outbox (event_type, payload, status). Either both the payment and the outbox entry commit, or neither does. An async worker polls the outbox for PENDING entries and delivers them with retries and exponential backoff. Staff+ idempotency for webhooks: the webhook payload must include an idempotency key. The merchant's endpoint may receive the same webhook multiple times (delivery retry after a timeout). If the merchant's system isn't idempotent, a payment can be processed twice on their end. Document this contract explicitly: webhook delivery is at-least-once, merchant endpoints must be idempotent.
 
-Deep dive 3: Multi-step payment flow — saga pattern for distributed transactions
-Weak answer: use a distributed transaction (2PC) across shards to atomically debit the buyer and credit the seller. 2PC is slow, blocks resources during the coordinator phase, and is prone to blocking on coordinator failure. Strong answer: saga pattern. A saga is a sequence of local transactions, each with a compensating transaction on failure. Payment saga: (1) RESERVE buyer funds (local ACID transaction), (2) CREDIT seller, (3) CAPTURE buyer reservation. On failure at step 2: run compensating transaction for step 1 (release reservation). Staff+ durability: the saga state machine must be stored durably. If the saga orchestrator crashes mid-saga, it must resume from the last committed step on restart — not restart from the beginning (which would double-charge). Store saga state in PostgreSQL with the current step and status. On restart: read uncommitted sagas, resume from last committed step. Sagas are eventually consistent — the DB may briefly be in an intermediate state, but all failures are handled gracefully by the compensating transactions.
+#### Deep dive 2: Outbox pattern — guaranteed webhook delivery without distributed transactions
+> [!CAUTION]
+> **🔴 Weak** — after recording the payment in the DB, make an HTTP call to deliver the webhook. If the process crashes between DB commit and HTTP call, the webhook is lost. The merchant never learns about the payment
+>
+> [!WARNING]
+> **🟡 Strong** — outbox pattern. In the same ACID transaction that records the payment: INSERT INTO outbox (event_type, payload, status). Either both the payment and the outbox entry commit, or neither does. An async worker polls the outbox for PENDING entries and delivers them with retries and exponential backoff
+>
+> [!TIP]
+> **🟢 Staff+** — idempotency for webhooks: the webhook payload must include an idempotency key. The merchant's endpoint may receive the same webhook multiple times (delivery retry after a timeout). If the merchant's system isn't idempotent, a payment can be processed twice on their end. Document this contract explicitly: webhook delivery is at-least-once, merchant endpoints must be idempotent
 
-Why the deep dives connect to the scaling problem: "High write throughput, strict financial correctness, unreliable external dependencies." Each deep dive addresses one constraint.
+
+#### Deep dive 3: Multi-step payment flow — saga pattern for distributed transactions
+> [!CAUTION]
+> **🔴 Weak** — use a distributed transaction (2PC) across shards to atomically debit the buyer and credit the seller. 2PC is slow, blocks resources during the coordinator phase, and is prone to blocking on coordinator failure
+>
+> [!WARNING]
+> **🟡 Strong** — saga pattern. A saga is a sequence of local transactions, each with a compensating transaction on failure. Payment saga: (1) RESERVE buyer funds (local ACID transaction), (2) CREDIT seller, (3) CAPTURE buyer reservation. On failure at step 2: run compensating transaction for step 1 (release reservation)
+>
+> [!TIP]
+> **🟢 Staff+** — durability: the saga state machine must be stored durably. If the saga orchestrator crashes mid-saga, it must resume from the last committed step on restart — not restart from the beginning (which would double-charge). Store saga state in PostgreSQL with the current step and status. On restart: read uncommitted sagas, resume from last committed step. Sagas are eventually consistent — the DB may briefly be in an intermediate state, but all failures are handled gracefully by the compensating transactions
+
+
+_Why the deep dives connect to the scaling problem: "High write throughput, strict financial correctness, unreliable external dependencies." Each deep dive addresses one constraint._
 
 </details>
 

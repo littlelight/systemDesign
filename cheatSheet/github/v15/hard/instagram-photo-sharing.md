@@ -291,16 +291,42 @@ So the short interview answer is this. Instagram is hard to scale because it com
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Media upload pipeline — pre-signed URLs, async transcode, multiple resolutions
-Weak answer: accept upload through app servers, store to S3, transcode sequentially before acknowledging. Strong answer: the scaling pain is the read side of media: photos and videos are large, globally distributed, and must load fast. The write side has different constraints: uploads are infrequent, can tolerate latency, but must be resumable. Staff+ upload flow: (1) client requests a pre-signed S3 URL — app server never sees the file bytes. (2) Client uploads directly to S3 (bypasses all app servers — critical for cost and throughput). (3) S3 upload event triggers async transcode job (Kafka or Lambda). (4) Transcode workers process in parallel: thumbnail (150×150), feed (1080×1080), full resolution (original), HEVC-compressed video if applicable. (5) Processed outputs written to S3 behind CDN. Transcode workers can be right-sized: CPU-heavy but stateless, easy to scale horizontally. Staff+ failure mode: transcode job fails for one resolution. Store transcode status per (media_id, resolution). Failed resolutions are retried independently. Video is available at successfully-transcoded resolutions while others are processing. User never sees a blank feed card — serve the best available resolution.
+#### Deep dive 1: Media upload pipeline — pre-signed URLs, async transcode, multiple resolutions
+> [!CAUTION]
+> **🔴 Weak** — accept upload through app servers, store to S3, transcode sequentially before acknowledging
+>
+> [!WARNING]
+> **🟡 Strong** — the scaling pain is the read side of media: photos and videos are large, globally distributed, and must load fast. The write side has different constraints: uploads are infrequent, can tolerate latency, but must be resumable
+>
+> [!TIP]
+> **🟢 Staff+** — (1) client requests a pre-signed S3 URL — app server never sees the file bytes. (2) Client uploads directly to S3 (bypasses all app servers — critical for cost and throughput). (3) S3 upload event triggers async transcode job (Kafka or Lambda). (4) Transcode workers process in parallel: thumbnail (150×150), feed (1080×1080), full resolution (original), HEVC-compressed video if applicable. (5) Processed outputs written to S3 behind CDN. Transcode workers can be right-sized: CPU-heavy but stateless, easy to scale horizontally. Staff+ failure mode: transcode job fails for one resolution. Store transcode status per (media_id, resolution). Failed resolutions are retried independently. Video is available at successfully-transcoded resolutions while others are processing. User never sees a blank feed card — serve the best available resolution
 
-Deep dive 2: Feed generation — hybrid fan-out with celebrity threshold
-The fan-out problem is the defining system design challenge for Instagram. At 2B users with 500M DAU, a celebrity with 50M followers posting once generates 50M Redis write operations for that post. Weak answer: async workers handle it. Strong answer: tiered fan-out with explicit threshold. Normal accounts ( 1M followers): skip fan-out entirely. At feed read time: user's pre-built feed from Redis + latest N posts from each followed celebrity fetched from Cassandra, merged in-memory. Staff+ detail: the threshold is not binary — it's a function of follower count and current fan-out worker lag. Monitor lag: if fan-out workers fall behind (>2 min), dynamically lower the threshold to reduce load. The merge at read time: user follows 3 celebrities, each contributes last 20 posts = 60 post candidates + 980 from pre-built feed. Sort by timestamp, serve top 50. Merge cost: O(C × log C) where C is typically < 10, negligible.
 
-Deep dive 3: CDN strategy for media delivery at global scale
-Weak answer: put one CDN in front of S3, set Cache-Control headers, let it fill naturally. Strong answer: 99%+ of media reads are served from CDN — this is what makes Instagram's media delivery economically viable. Staff+ CDN design: (1) Multi-CDN — use two CDN providers. Route requests to whichever CDN has lower P95 latency for that region (measured by synthetic probes). CDN failover in seconds. (2) Cache warming — for content from large accounts, pre-push content to CDN POPs (Points of Presence) in relevant regions before publication. (3) URL structure encodes resolution: cdn.instagram.com/media/{id}/1080.jpg — CDN can cache all resolutions independently. (4) Signed CDN URLs — prevent hotlinking and unauthorized access. URL includes HMAC signature with expiry. CDN validates signature at edge without origin call. (5) Cache invalidation — when a post is deleted, purge the CDN cache for all resolution variants. CDN APIs support tag-based purge: tag all media variants with the post_id, purge by tag on deletion.
+#### Deep dive 2: Feed generation — hybrid fan-out with celebrity threshold
+_The fan-out problem is the defining system design challenge for Instagram. At 2B users with 500M DAU, a celebrity with 50M followers posting once generates 50M Redis write operations for that post_
 
-Why the deep dives connect to the scaling problem: "Feed fan-out, media blob delivery, and celebrity hot spots." Each deep dive addresses one dimension.
+> [!CAUTION]
+> **🔴 Weak** — async workers handle it
+>
+> [!WARNING]
+> **🟡 Strong** — tiered fan-out with explicit threshold. Normal accounts (< 1M followers): fan-out on write — post ID pushed to each follower's Redis sorted set via async Kafka workers. Celebrity accounts (> 1M followers): skip fan-out entirely. At feed read time: user's pre-built feed from Redis + latest N posts from each followed celebrity fetched from Cassandra, merged in-memory
+>
+> [!TIP]
+> **🟢 Staff+** — the threshold is not binary — it's a function of follower count and current fan-out worker lag. Monitor lag: if fan-out workers fall behind (>2 min), dynamically lower the threshold to reduce load. The merge at read time: user follows 3 celebrities, each contributes last 20 posts = 60 post candidates + 980 from pre-built feed. Sort by timestamp, serve top 50. Merge cost: O(C × log C) where C is typically < 10, negligible
+
+
+#### Deep dive 3: CDN strategy for media delivery at global scale
+> [!CAUTION]
+> **🔴 Weak** — put one CDN in front of S3, set Cache-Control headers, let it fill naturally
+>
+> [!WARNING]
+> **🟡 Strong** — 99%+ of media reads are served from CDN — this is what makes Instagram's media delivery economically viable
+>
+> [!TIP]
+> **🟢 Staff+** — CDN design: (1) Multi-CDN — use two CDN providers. Route requests to whichever CDN has lower P95 latency for that region (measured by synthetic probes). CDN failover in seconds. (2) Cache warming — for content from large accounts, pre-push content to CDN POPs (Points of Presence) in relevant regions before publication. (3) URL structure encodes resolution: cdn.instagram.com/media/{id}/1080.jpg — CDN can cache all resolutions independently. (4) Signed CDN URLs — prevent hotlinking and unauthorized access. URL includes HMAC signature with expiry. CDN validates signature at edge without origin call. (5) Cache invalidation — when a post is deleted, purge the CDN cache for all resolution variants. CDN APIs support tag-based purge: tag all media variants with the post_id, purge by tag on deletion
+
+
+_Why the deep dives connect to the scaling problem: "Feed fan-out, media blob delivery, and celebrity hot spots." Each deep dive addresses one dimension._
 
 </details>
 

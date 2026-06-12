@@ -78,9 +78,29 @@ Validate card data after edits:
 python3 scripts/validate_systems.py
 python3 scripts/build_github_view.py      # regenerate Markdown
 python3 scripts/build_prerendered_html.py  # regenerate *_github.html
+python3 scripts/build_quick_fire_html.py   # regenerate interview-quick-fire.html
+python3 scripts/enrich_quick_fire_ladder.py  # Weak/Strong/Staff+ on quick-fire patterns
 ```
 
 ## Study paths
+
+### Staff answer ladder (daily drill)
+
+Every quick-fire pattern and v15 **Deep dive** uses three rungs. Practice climbing one rung per follow-up — never jump straight to Staff+.
+
+| Rung | Say this | Signals |
+|------|----------|---------|
+| 🔴 **Weak** | Tool name only | Pattern recall |
+| 🟡 **Strong** | Pattern + why it fits this workload | Credible design |
+| 🟢 **Staff+** | Failure mode + metric + revisit trigger | Operated production |
+
+**15 min/day:** Pick 3 patterns from [`interview-quick-fire.md`](cheatSheet/interview-quick-fire.md) — say Weak out loud, then Strong, then Staff+ with one metric. **45 min mock:** One v15 card — deliver Strong on architecture, Staff+ on each deep dive when probed.
+
+```bash
+python3 scripts/enrich_quick_fire_ladder.py   # after editing patterns
+python3 scripts/build_quick_fire_html.py      # colorful HTML
+python3 scripts/build_github_view.py          # v15 MD deep dives
+```
 
 ### 4-week interview prep (v15)
 
@@ -112,7 +132,7 @@ Staff+ prep built around a repeatable delivery framework.
 
 **Quick reference** — CAP, protocols, consistency patterns, **cloud services + AWS commands** (full tables in v10).
 
-**Interview quick-fire** — [`cheatSheet/interview-quick-fire.md`](cheatSheet/interview-quick-fire.md) — 60+ problem → staff-level answers (standalone Markdown; top 10 also inline in cheatsheet).
+**Interview quick-fire** — [`cheatSheet/interview-quick-fire.md`](cheatSheet/interview-quick-fire.md) — 50 patterns with **Weak → Strong → Staff+** ladders, DMOP deep-dive spine, and severity callouts. Colorful view: [`interview-quick-fire.html`](cheatSheet/interview-quick-fire.html).
 
 **40 systems** by difficulty:
 

@@ -260,16 +260,42 @@ There are three main pain points. First, feed reads are massive, especially duri
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Feed generation — precomputed vs. on-demand at 100M DAU
-Weak answer: query Cassandra per request, assemble feed on-demand. Strong answer: the scaling pain is that you can't query the database for every feed request at 11,600 QPS and stay under 200ms. Weak answer: query Cassandra per request. Strong answer: pre-compute regional Redis sorted sets (score = publish timestamp) and serve feeds from cache. The hard part is keeping pre-computed feeds fresh during breaking news when articles arrive at high frequency. Staff+ detail: write-through feed population — when an article passes dedup and is stored, the ingestion service immediately pushes its ID into the relevant regional sorted sets. This inverts the cache pattern: writes are the fan-out, reads are O(1) ZREVRANGE. Tradeoffs to name: (1) feed storage cost (100M users × 50 IDs × 8 bytes = 40 GB Redis — clusters needed), (2) feed staleness during cache update, (3) thundering herd if a regional cache expires simultaneously. Fix the last one with probabilistic early expiration.
+#### Deep dive 1: Feed generation — precomputed vs. on-demand at 100M DAU
+> [!CAUTION]
+> **🔴 Weak** — query Cassandra per request, assemble feed on-demand
+>
+> [!WARNING]
+> **🟡 Strong** — the scaling pain is that you can't query the database for every feed request at 11,600 QPS and stay under 200ms. Weak answer: query Cassandra per request. Strong answer: pre-compute regional Redis sorted sets (score = publish timestamp) and serve feeds from cache. The hard part is keeping pre-computed feeds fresh during breaking news when articles arrive at high frequency
+>
+> [!TIP]
+> **🟢 Staff+** — write-through feed population — when an article passes dedup and is stored, the ingestion service immediately pushes its ID into the relevant regional sorted sets. This inverts the cache pattern: writes are the fan-out, reads are O(1) ZREVRANGE. Tradeoffs to name: (1) feed storage cost (100M users × 50 IDs × 8 bytes = 40 GB Redis — clusters needed), (2) feed staleness during cache update, (3) thundering herd if a regional cache expires simultaneously. Fix the last one with probabilistic early expiration
 
-Deep dive 2: Cursor-based pagination — why it's mandatory for live feeds
-Offset pagination is broken for live feeds: new articles shift existing positions while the user scrolls, causing duplicates (article appears twice) or gaps (article skipped). Weak answer: use offset pagination, acknowledge the issue. Strong answer: cursor pagination using a composite cursor (published_at + article_id). The cursor encodes where the user is in the feed at the moment they fetched the previous page — new articles added to the top don't shift relative positions below the cursor. Staff+ detail: cursor must be stable under concurrent feed updates. Using (published_at, article_id) as cursor is stable because we sort by published_at DESC, article_id DESC — inserting new articles at the top doesn't reorder articles below any existing cursor position. Implementation: SELECT * FROM feed WHERE (published_at, article_id) < (cursor_time, cursor_id) ORDER BY published_at DESC, article_id DESC LIMIT 20.
 
-Deep dive 3: Article deduplication and story clustering
-Weak answer: use exact SHA-256 hashing — only catches identical articles. Strong answer: SimHash dedup: each article gets a fingerprint by tokenizing text → compute tf-idf weights → hash weighted term vector to 64-bit integer. Hamming distance < 3 between two fingerprints = near-duplicate. This catches the same story reported by 50 publishers with slight wording differences. Staff+ detail: SimHash lookup requires comparing a new fingerprint against all stored fingerprints — at 1M articles/day this is O(N) per insert. The solution: partition fingerprints by their first K bits (locality-sensitive hashing) so only fingerprints in the same bucket need comparison. Story clustering goes further: group near-duplicates into a "story" entity with the highest-authority source as the canonical article. Ranking: recency × source authority score (PageRank-like, precomputed per domain).
+#### Deep dive 2: Cursor-based pagination — why it's mandatory for live feeds
+_Offset pagination is broken for live feeds: new articles shift existing positions while the user scrolls, causing duplicates (article appears twice) or gaps (article skipped)_
 
-Why the deep dives connect to the scaling problem: "Both sides scale at once — ingestion and reads." Deep dive 1 solves read scaling. Deep dive 2 solves pagination correctness. Deep dive 3 solves the content quality problem that makes the system valuable.
+> [!CAUTION]
+> **🔴 Weak** — use offset pagination, acknowledge the issue
+>
+> [!WARNING]
+> **🟡 Strong** — cursor pagination using a composite cursor (published_at + article_id). The cursor encodes where the user is in the feed at the moment they fetched the previous page — new articles added to the top don't shift relative positions below the cursor
+>
+> [!TIP]
+> **🟢 Staff+** — cursor must be stable under concurrent feed updates. Using (published_at, article_id) as cursor is stable because we sort by published_at DESC, article_id DESC — inserting new articles at the top doesn't reorder articles below any existing cursor position. Implementation: SELECT * FROM feed WHERE (published_at, article_id) < (cursor_time, cursor_id) ORDER BY published_at DESC, article_id DESC LIMIT 20
+
+
+#### Deep dive 3: Article deduplication and story clustering
+> [!CAUTION]
+> **🔴 Weak** — use exact SHA-256 hashing — only catches identical articles
+>
+> [!WARNING]
+> **🟡 Strong** — SimHash dedup: each article gets a fingerprint by tokenizing text → compute tf-idf weights → hash weighted term vector to 64-bit integer. Hamming distance < 3 between two fingerprints = near-duplicate. This catches the same story reported by 50 publishers with slight wording differences
+>
+> [!TIP]
+> **🟢 Staff+** — SimHash lookup requires comparing a new fingerprint against all stored fingerprints — at 1M articles/day this is O(N) per insert. The solution: partition fingerprints by their first K bits (locality-sensitive hashing) so only fingerprints in the same bucket need comparison. Story clustering goes further: group near-duplicates into a "story" entity with the highest-authority source as the canonical article. Ranking: recency × source authority score (PageRank-like, precomputed per domain)
+
+
+_Why the deep dives connect to the scaling problem: "Both sides scale at once — ingestion and reads." Deep dive 1 solves read scaling. Deep dive 2 solves pagination correctness. Deep dive 3 solves the content quality problem that makes the system valuable._
 
 </details>
 

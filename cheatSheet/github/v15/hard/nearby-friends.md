@@ -202,17 +202,56 @@ High-frequency ephemeral writes and geo indexing are the pain points — not fri
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Write path at scale
-67K GEOADD/s is Redis-comfortable. Never persist every fix to PG. TTL keys expire stale users.
+#### Deep dive 1: Write path at scale
+_67K GEOADD/s is Redis-comfortable. Never persist every fix to PG. TTL keys expire stale users_
 
-Deep dive 2: Query algorithm
-Compute user cell. Fetch users in cell + 8 neighbors. Filter by haversine distance < R. Intersect with friend IDs from PG/cache.
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify write path at scale — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — 67K GEOADD/s is Redis-comfortable. Never persist every fix to PG. TTL keys expire stale users
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
-Deep dive 3: Privacy and precision
-Reduce precision to 5-char geohash (~5km) by default. Ghost mode deletes Redis entry immediately.
 
-Deep dive 4: Notification dedup
-Do not push every 30s if friend still nearby. State machine: ENTERED_NEARBY → INSIDE → EXITED. Push only on transitions.
+#### Deep dive 2: Query algorithm
+_Compute user cell. Fetch users in cell + 8 neighbors. Filter by haversine distance < R. Intersect with friend IDs from PG/cache_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify query algorithm — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Compute user cell. Fetch users in cell + 8 neighbors. Filter by haversine distance < R. Intersect with friend IDs from PG/cache
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Privacy and precision
+_Reduce precision to 5-char geohash (~5km) by default. Ghost mode deletes Redis entry immediately_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify privacy and precision — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Reduce precision to 5-char geohash (~5km) by default. Ghost mode deletes Redis entry immediately
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Notification dedup
+_Do not push every 30s if friend still nearby. State machine: ENTERED_NEARBY → INSIDE → EXITED. Push only on transitions_
+
+> [!CAUTION]
+> **🔴 Weak** — Retry until delivery succeeds — duplicates are rare.
+>
+> [!WARNING]
+> **🟡 Strong** — Do not push every 30s if friend still nearby. State machine: ENTERED_NEARBY → INSIDE → EXITED. Push only on transitions
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

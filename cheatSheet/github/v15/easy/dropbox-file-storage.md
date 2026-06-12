@@ -269,16 +269,44 @@ A few things make this hard. Large files can time out, fail halfway, and need re
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Large file uploads — chunking, resumability, and deduplication
-The scaling pain is moving and syncing large files cheaply and reliably. Weak answer: upload file to S3, done. Strong answer: client-side chunking (4 MB chunks) with SHA-256 fingerprint per chunk. Before uploading, client sends hash list to server — server responds with which hashes are new. Only missing chunks are transferred. This is content-addressable storage: same chunk stored once globally. Staff+ detail: chunk size is a design decision with real tradeoffs — smaller chunks give better dedup granularity and retry precision but more metadata overhead and round-trips; larger chunks have less overhead but worse dedup and waste bandwidth if a chunk fails mid-upload. Content-defined chunking (CDC using rolling hash, e.g., Rabin fingerprint) gives better dedup ratios for structured files (docs, code) by finding natural chunk boundaries rather than fixed offsets. The upload flow must be resumable: store upload state per (file_id, chunk_offset) so a failed upload resumes from the last committed chunk, not from scratch.
+#### Deep dive 1: Large file uploads — chunking, resumability, and deduplication
+_The scaling pain is moving and syncing large files cheaply and reliably_
 
-Deep dive 2: Sync across devices — reliability and conflict resolution
-The scaling pain is cross-device coordination — detecting changes, pushing updates, and recovering from missed notifications. Weak answer: polling. Strong answer: WebSocket or SSE push for change notifications, with polling as a fallback for reconnect. The hard problem is what happens when two devices edit the same file while one is offline. Dropbox's actual approach: last-write-wins per file, conflicts result in a conflict copy (two files) rather than silent data loss. Staff+ level: vector clocks or file version numbers allow the server to detect when a client's local state diverges from the server's state, enabling explicit conflict presentation rather than silent overwrites. The sync state machine per device: (synced → local_change_pending → uploading → synced) and (synced → remote_change_available → downloading → synced). On reconnect, client sends its last-known state vector; server diffs and returns the minimal change set.
+> [!CAUTION]
+> **🔴 Weak** — upload file to S3, done
+>
+> [!WARNING]
+> **🟡 Strong** — client-side chunking (4 MB chunks) with SHA-256 fingerprint per chunk. Before uploading, client sends hash list to server — server responds with which hashes are new. Only missing chunks are transferred. This is content-addressable storage: same chunk stored once globally
+>
+> [!TIP]
+> **🟢 Staff+** — chunk size is a design decision with real tradeoffs — smaller chunks give better dedup granularity and retry precision but more metadata overhead and round-trips; larger chunks have less overhead but worse dedup and waste bandwidth if a chunk fails mid-upload. Content-defined chunking (CDC using rolling hash, e.g., Rabin fingerprint) gives better dedup ratios for structured files (docs, code) by finding natural chunk boundaries rather than fixed offsets. The upload flow must be resumable: store upload state per (file_id, chunk_offset) so a failed upload resumes from the last committed chunk, not from scratch
 
-Deep dive 3: Security, sharing, and performance
-Weak answer: store the file URL in a shared link, serve directly from S3 with a public ACL. Strong answer: sharing model: SharedFiles table (file_id, shared_with_user_id, permission, created_at). Staff+ concern: permission check on every file operation must be fast — cache permission results in Redis with short TTL, invalidate on any permission change. For large organizations: hierarchical permissions (team → folder → file) require careful data modeling to avoid O(n) permission lookups. Security: pre-signed S3 URLs with short expiry (15 min) for downloads — URL cannot be reused after expiry, prevents link sharing beyond the intended recipient. For compliance: server-side encryption (SSE-S3 or SSE-KMS), access logs for auditing, retention policies. Performance: CDN in front of S3 with signed cookies for authenticated users — reduces S3 egress costs and improves global latency.
 
-Why the deep dives connect to the scaling problem: "Big blobs plus cross-device coordination." Deep dive 1 solves the blob problem (chunking + dedup). Deep dive 2 solves coordination (sync state machine + conflict handling). Deep dive 3 solves correctness and performance at scale.
+#### Deep dive 2: Sync across devices — reliability and conflict resolution
+_The scaling pain is cross-device coordination — detecting changes, pushing updates, and recovering from missed notifications_
+
+> [!CAUTION]
+> **🔴 Weak** — polling
+>
+> [!WARNING]
+> **🟡 Strong** — WebSocket or SSE push for change notifications, with polling as a fallback for reconnect. The hard problem is what happens when two devices edit the same file while one is offline. Dropbox's actual approach: last-write-wins per file, conflicts result in a conflict copy (two files) rather than silent data loss
+>
+> [!TIP]
+> **🟢 Staff+** — vector clocks or file version numbers allow the server to detect when a client's local state diverges from the server's state, enabling explicit conflict presentation rather than silent overwrites. The sync state machine per device: (synced → local_change_pending → uploading → synced) and (synced → remote_change_available → downloading → synced). On reconnect, client sends its last-known state vector; server diffs and returns the minimal change set
+
+
+#### Deep dive 3: Security, sharing, and performance
+> [!CAUTION]
+> **🔴 Weak** — store the file URL in a shared link, serve directly from S3 with a public ACL
+>
+> [!WARNING]
+> **🟡 Strong** — sharing model: SharedFiles table (file_id, shared_with_user_id, permission, created_at)
+>
+> [!TIP]
+> **🟢 Staff+** — permission check on every file operation must be fast — cache permission results in Redis with short TTL, invalidate on any permission change. For large organizations: hierarchical permissions (team → folder → file) require careful data modeling to avoid O(n) permission lookups. Security: pre-signed S3 URLs with short expiry (15 min) for downloads — URL cannot be reused after expiry, prevents link sharing beyond the intended recipient. For compliance: server-side encryption (SSE-S3 or SSE-KMS), access logs for auditing, retention policies. Performance: CDN in front of S3 with signed cookies for authenticated users — reduces S3 egress costs and improves global latency
+
+
+_Why the deep dives connect to the scaling problem: "Big blobs plus cross-device coordination." Deep dive 1 solves the blob problem (chunking + dedup). Deep dive 2 solves coordination (sync state machine + conflict handling). Deep dive 3 solves correctness and performance at scale._
 
 </details>
 

@@ -276,16 +276,42 @@ So there are really two scaling pain points. First, availability is expensive be
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Availability reads at scale — the geo + inventory problem
-Weak answer: query PostgreSQL with PostGIS radius filter on every availability request. Strong answer: the scaling pain is that availability reads are expensive: find nearby DCs, read inventory from each, union results, respond in <100ms. This is not a simple DB read — it's a geospatial + multi-source aggregation under search-like QPS. Weak answer: query PG with PostGIS radius filter. Strong answer: pre-compute a geohash index of all DCs, cache inventory in Redis with short TTL (30s). Availability query = geohash prefix lookup (O(1)) + Redis HGETALL for each DC in range. Staff+ detail: inventory in Redis is a projection, not the source of truth — it gets stale within the TTL window. This is intentional: users browsing see approximately-fresh inventory, users purchasing get a real-time DB check. The two paths have different consistency requirements and must be explicitly separated. At high QPS, even Redis can become a bottleneck — read-through cache with local in-process LRU for the hottest items (fast movers, popular items) adds another layer.
+#### Deep dive 1: Availability reads at scale — the geo + inventory problem
+> [!CAUTION]
+> **🔴 Weak** — query PostgreSQL with PostGIS radius filter on every availability request
+>
+> [!WARNING]
+> **🟡 Strong** — the scaling pain is that availability reads are expensive: find nearby DCs, read inventory from each, union results, respond in <100ms. This is not a simple DB read — it's a geospatial + multi-source aggregation under search-like QPS. Weak answer: query PG with PostGIS radius filter. Strong answer: pre-compute a geohash index of all DCs, cache inventory in Redis with short TTL (30s). Availability query = geohash prefix lookup (O(1)) + Redis HGETALL for each DC in range
+>
+> [!TIP]
+> **🟢 Staff+** — inventory in Redis is a projection, not the source of truth — it gets stale within the TTL window. This is intentional: users browsing see approximately-fresh inventory, users purchasing get a real-time DB check. The two paths have different consistency requirements and must be explicitly separated. At high QPS, even Redis can become a bottleneck — read-through cache with local in-process LRU for the hottest items (fast movers, popular items) adds another layer
 
-Deep dive 2: Order placement — preventing oversell under concurrent writes
-The core hard problem: many users buying the last unit simultaneously. Weak answer: check inventory then decrement (two operations — TOCTOU race). Strong answer: SELECT FOR UPDATE within a PostgreSQL transaction — atomic lock, check, and decrement. Staff+ tradeoff: pessimistic locking works but creates serialization under high concurrent orders for the same item. Optimistic locking (CAS via version number) is better under low contention, worse under high contention. For a local delivery system where popular items genuinely spike (weather events, flash sales), pessimistic is the safer default. SQS queue for order submission acts as a shock absorber: workers drain the queue at a safe DB write rate, and user sees "order processing" rather than an error. Idempotency key on every order prevents double-charge on client retry.
 
-Deep dive 3: Geo-routing — nearest DC with ETA, not just distance
-Weak answer: find the nearest DC by Euclidean distance. Strong answer: a production system doesn't just find the nearest DC by Euclidean distance — it finds the nearest DC that can fulfill the order within the delivery window. This requires: (1) drive time estimate from DC to delivery address (routing API, not just radius), (2) DC capacity check (is there a driver available?), (3) inventory check (does this DC have the items?). Staff+ answer: this is a constraint satisfaction problem across three dimensions. The production approach is coarse + fine: geohash radius filter first (fast, eliminates 99% of DCs), then routing API call on the small candidate set (expensive, accurate). Cache routing estimates per (DC_geohash, delivery_zone) pair with 5-minute TTL to reduce routing API costs.
+#### Deep dive 2: Order placement — preventing oversell under concurrent writes
+_The core hard problem: many users buying the last unit simultaneously_
 
-Why the deep dives connect to the scaling problem: "Reads are broad and frequent; writes are rare but delicate." Deep dive 1 solves the read problem. Deep dive 2 solves the write correctness problem. Deep dive 3 solves the geo-routing precision problem.
+> [!CAUTION]
+> **🔴 Weak** — check inventory then decrement (two operations — TOCTOU race)
+>
+> [!WARNING]
+> **🟡 Strong** — SELECT FOR UPDATE within a PostgreSQL transaction — atomic lock, check, and decrement
+>
+> [!TIP]
+> **🟢 Staff+** — tradeoff: pessimistic locking works but creates serialization under high concurrent orders for the same item. Optimistic locking (CAS via version number) is better under low contention, worse under high contention. For a local delivery system where popular items genuinely spike (weather events, flash sales), pessimistic is the safer default. SQS queue for order submission acts as a shock absorber: workers drain the queue at a safe DB write rate, and user sees "order processing" rather than an error. Idempotency key on every order prevents double-charge on client retry
+
+
+#### Deep dive 3: Geo-routing — nearest DC with ETA, not just distance
+> [!CAUTION]
+> **🔴 Weak** — find the nearest DC by Euclidean distance
+>
+> [!WARNING]
+> **🟡 Strong** — a production system doesn't just find the nearest DC by Euclidean distance — it finds the nearest DC that can fulfill the order within the delivery window. This requires: (1) drive time estimate from DC to delivery address (routing API, not just radius), (2) DC capacity check (is there a driver available?), (3) inventory check (does this DC have the items?)
+>
+> [!TIP]
+> **🟢 Staff+** — this is a constraint satisfaction problem across three dimensions. The production approach is coarse + fine: geohash radius filter first (fast, eliminates 99% of DCs), then routing API call on the small candidate set (expensive, accurate). Cache routing estimates per (DC_geohash, delivery_zone) pair with 5-minute TTL to reduce routing API costs
+
+
+_Why the deep dives connect to the scaling problem: "Reads are broad and frequent; writes are rare but delicate." Deep dive 1 solves the read problem. Deep dive 2 solves the write correctness problem. Deep dive 3 solves the geo-routing precision problem._
 
 </details>
 

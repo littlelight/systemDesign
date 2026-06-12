@@ -201,17 +201,54 @@ Petabyte-scale immutable tiles and global CDN hit ratio dominate — routing is 
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Tile storage and CDN
-Weak: generate tiles per request. Strong: pre-render pyramid, store in S3, serve via CDN. Staff+: invalidation only for traffic/incident overlays.
+#### Deep dive 1: Tile storage and CDN
+> [!CAUTION]
+> **🔴 Weak** — generate tiles per request
+>
+> [!WARNING]
+> **🟡 Strong** — pre-render pyramid, store in S3, serve via CDN. Staff+: invalidation only for traffic/incident overlays
+>
+> [!TIP]
+> **🟢 Staff+** — Name the metric you'd alert on and when you'd revisit this design.
 
-Deep dive 2: POI search ranking
-Text relevance × distance decay × popularity. Geo filter first to shrink candidate set.
 
-Deep dive 3: Routing at scale
-Graph partitioned by region. Highway hierarchy: coarse graph for long distances, refine locally.
+#### Deep dive 2: POI search ranking
+_Text relevance × distance decay × popularity. Geo filter first to shrink candidate set_
 
-Deep dive 4: Fresh traffic data
-Probe GPS stream → aggregate speeds per road segment → publish traffic layer every 2–5 min.
+> [!CAUTION]
+> **🔴 Weak** — SELECT * WHERE column LIKE '%query%'.
+>
+> [!WARNING]
+> **🟡 Strong** — Text relevance × distance decay × popularity. Geo filter first to shrink candidate set
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Routing at scale
+_Graph partitioned by region. Highway hierarchy: coarse graph for long distances, refine locally_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify routing at scale — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Graph partitioned by region. Highway hierarchy: coarse graph for long distances, refine locally
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Fresh traffic data
+_Probe GPS stream → aggregate speeds per road segment → publish traffic layer every 2–5 min_
+
+> [!CAUTION]
+> **🔴 Weak** — Oversimplify fresh traffic data — name one component, skip failure modes and metrics.
+>
+> [!WARNING]
+> **🟡 Strong** — Probe GPS stream → aggregate speeds per road segment → publish traffic layer every 2–5 min
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

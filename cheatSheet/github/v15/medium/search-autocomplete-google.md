@@ -205,17 +205,54 @@ Autocomplete looks read-heavy but the real trick is avoiding work: debounce cuts
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Trie structure and top-K at every node
-Weak answer: scan all queries matching prefix on every keystroke. Strong answer: prefix tree where each node stores top-10 completions by global frequency. Query = O(prefix length) traversal + O(1) return. Staff+ sizing: 1M unique prefixes × 10 suggestions × 50B ≈ 500 MB in Redis.
+#### Deep dive 1: Trie structure and top-K at every node
+> [!CAUTION]
+> **🔴 Weak** — scan all queries matching prefix on every keystroke
+>
+> [!WARNING]
+> **🟡 Strong** — prefix tree where each node stores top-10 completions by global frequency. Query = O(prefix length) traversal + O(1) return
+>
+> [!TIP]
+> **🟢 Staff+** — 1M unique prefixes × 10 suggestions × 50B ≈ 500 MB in Redis
 
-Deep dive 2: Data pipeline — batch rebuild with hot-term injection
-Weekly MapReduce over query logs → frequency table → trie builder → shadow deploy → atomic flip. Breaking news: real-time detector flags queries with no trie match exceeding 1K/5min → inject temporary hot entry until next rebuild.
 
-Deep dive 3: Latency budget — debounce, CDN, sharding
-578K QPS raw keystrokes → 58K with debounce. CDN serves 90% from edge. Backend sees ~5.8K QPS for long tail. Shard Redis by first character; sub-shard hot prefixes like "th".
+#### Deep dive 2: Data pipeline — batch rebuild with hot-term injection
+_Weekly MapReduce over query logs → frequency table → trie builder → shadow deploy → atomic flip. Breaking news: real-time detector flags queries with no trie match exceeding 1K/5min → inject temporary hot entry until next rebuild_
 
-Deep dive 4: Personalization without per-user tries
-Fetch user boost vector from Redis (recent searches). Re-rank trie top-50 candidates in ~5ms. Decouple retrieval (trie) from ranking (lightweight model).
+> [!CAUTION]
+> **🔴 Weak** — Rebuild the full index nightly — no incremental updates.
+>
+> [!WARNING]
+> **🟡 Strong** — Weekly MapReduce over query logs → frequency table → trie builder → shadow deploy → atomic flip. Breaking news: real-time detector flags queries with no trie match exceeding 1K/5min → inject temporary hot entry until next rebuild
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 3: Latency budget — debounce, CDN, sharding
+_578K QPS raw keystrokes → 58K with debounce. CDN serves 90% from edge. Backend sees ~5.8K QPS for long tail. Shard Redis by first character; sub-shard hot prefixes like "th"_
+
+> [!CAUTION]
+> **🔴 Weak** — Serve every request from origin — CDN is optional.
+>
+> [!WARNING]
+> **🟡 Strong** — 578K QPS raw keystrokes → 58K with debounce. CDN serves 90% from edge. Backend sees ~5.8K QPS for long tail. Shard Redis by first character; sub-shard hot prefixes like "th"
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
+
+
+#### Deep dive 4: Personalization without per-user tries
+_Fetch user boost vector from Redis (recent searches). Re-rank trie top-50 candidates in ~5ms. Decouple retrieval (trie) from ranking (lightweight model)_
+
+> [!CAUTION]
+> **🔴 Weak** — Build a per-user trie — one per user at scale.
+>
+> [!WARNING]
+> **🟡 Strong** — Fetch user boost vector from Redis (recent searches). Re-rank trie top-50 candidates in ~5ms. Decouple retrieval (trie) from ranking (lightweight model)
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 

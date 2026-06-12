@@ -262,16 +262,44 @@ A good interview summary is this. Ad Click Aggregator is hard because it combine
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Lambda Architecture — real-time stream + batch reconciliation
-The business requirement creates the architectural constraint: real-time approximate metrics for dashboards (advertisers want to see campaign performance now) AND exact counts for billing (advertisers dispute invoices with exact numbers). No single pipeline satisfies both. Weak answer: stream only (approximate). Strong answer: Lambda Architecture explicitly. Speed layer (Flink): processes Kafka events in near-real-time, aggregates with 100ms batch windows, writes to ClickHouse. Results are fast but approximate (Flink checkpointing can reprocess, but windows have an allowed lateness boundary beyond which events are dropped). Batch layer (Spark): reads raw events from the event lake (S3-compatible, 90-day retention), runs daily exact aggregation. Batch results are exact, with 24-hour latency. Serving layer (ClickHouse): stores both approximate (updated every 30s by Flink) and exact (updated daily by Spark) counts. Advertisers see approximate for real-time view, exact for invoice. Staff+ architectural point: the batch layer is not a fallback — it's a first-class part of the design that serves a different SLA requirement.
+#### Deep dive 1: Lambda Architecture — real-time stream + batch reconciliation
+_The business requirement creates the architectural constraint: real-time approximate metrics for dashboards (advertisers want to see campaign performance now) AND exact counts for billing (advertisers dispute invoices with exact numbers). No single pipeline satisfies both_
 
-Deep dive 2: Click deduplication — UUID + Bloom filter + exact reconciliation
-Click fraud via duplicate clicks directly translates to advertiser overbilling. Dedup must be accurate. Weak answer: check DB for duplicates. Strong answer: UUID per click event, Bloom filter at ingestion. The Bloom filter: expected 100M unique events/day, 0.01% false positive rate → 300 MB memory, acceptably small. On each click event: check Bloom filter. If not present: pass through, add to Bloom filter. If present: probable duplicate, drop the event. Bloom filter false positives (0.01%) = 10K legitimate clicks dropped per day out of 100M — acceptable for real-time dashboard. For billing-critical accuracy: the batch path uses exact dedup. The raw event log in S3 is the source of truth. Spark job: GROUP BY (click_id, UUID) and count distinct — exact dedup. Any click that appears in the raw log but not in the Bloom-filtered stream is captured in the batch reconciliation. Staff+ detail: the Bloom filter for a 24-hour window is reset daily. Old Bloom filters are discarded, new ones start fresh. UUID expiry aligns with the billing period.
+> [!CAUTION]
+> **🔴 Weak** — stream only (approximate)
+>
+> [!WARNING]
+> **🟡 Strong** — Lambda Architecture explicitly. Speed layer (Flink): processes Kafka events in near-real-time, aggregates with 100ms batch windows, writes to ClickHouse. Results are fast but approximate (Flink checkpointing can reprocess, but windows have an allowed lateness boundary beyond which events are dropped). Batch layer (Spark): reads raw events from the event lake (S3-compatible, 90-day retention), runs daily exact aggregation. Batch results are exact, with 24-hour latency. Serving layer (ClickHouse): stores both approximate (updated every 30s by Flink) and exact (updated daily by Spark) counts. Advertisers see approximate for real-time view, exact for invoice
+>
+> [!TIP]
+> **🟢 Staff+** — architectural point: the batch layer is not a fallback — it's a first-class part of the design that serves a different SLA requirement
 
-Deep dive 3: Hot partition handling — skewed ad traffic
-Weak answer: increase the total number of Kafka partitions cluster-wide. Strong answer: one viral ad campaign can generate 100× normal click volume. In a Kafka cluster partitioned by ad_id, this creates a hot partition. Staff+ detection: monitor consumer lag per (topic, partition). When a partition exceeds a lag threshold, detect the hot ad_id causing the spike. Use a compound partition key (ad_id + random_suffix_0_to_N) to spread the load across N partitions. The Flink job handles the merge: KEY BY ad_id across multiple partitions gives correct aggregation regardless of how many partitions the ad's events are spread across. Weak answer: increase partition count. Strong answer: dynamic repartitioning. Monitor partition consumer lag per (topic, partition). When a partition exceeds a lag threshold: detect the hot ad_id causing the spike. Create additional Kafka partitions for that ad_id using a compound key (ad_id + random_suffix). The Flink job handles this: multiple partitions for the same ad_id, Flink aggregates across all partitions in a keyed stream (KEY BY ad_id → Flink handles the merge). The output is correct regardless of how many partitions the ad's events are spread across. At the ClickHouse write side: batching (Flink emits aggregated counts rather than raw events) reduces ClickHouse write amplification. For ClickHouse: ad_id is the partition key for the aggregated table — hot ad_id creates a hot ClickHouse partition. Fix: ReplicatedMergeTree with multiple replicas for hot ad_ids (ClickHouse routes reads to replicas).
 
-Why the deep dives connect to the scaling problem: "Write-heavy analytics pipeline with correctness requirements." Each deep dive addresses one constraint.
+#### Deep dive 2: Click deduplication — UUID + Bloom filter + exact reconciliation
+_Click fraud via duplicate clicks directly translates to advertiser overbilling. Dedup must be accurate_
+
+> [!CAUTION]
+> **🔴 Weak** — check DB for duplicates
+>
+> [!WARNING]
+> **🟡 Strong** — UUID per click event, Bloom filter at ingestion. The Bloom filter: expected 100M unique events/day, 0.01% false positive rate → 300 MB memory, acceptably small. On each click event: check Bloom filter. If not present: pass through, add to Bloom filter. If present: probable duplicate, drop the event. Bloom filter false positives (0.01%) = 10K legitimate clicks dropped per day out of 100M — acceptable for real-time dashboard. For billing-critical accuracy: the batch path uses exact dedup. The raw event log in S3 is the source of truth. Spark job: GROUP BY (click_id, UUID) and count distinct — exact dedup. Any click that appears in the raw log but not in the Bloom-filtered stream is captured in the batch reconciliation
+>
+> [!TIP]
+> **🟢 Staff+** — the Bloom filter for a 24-hour window is reset daily. Old Bloom filters are discarded, new ones start fresh. UUID expiry aligns with the billing period
+
+
+#### Deep dive 3: Hot partition handling — skewed ad traffic
+> [!CAUTION]
+> **🔴 Weak** — increase the total number of Kafka partitions cluster-wide
+>
+> [!WARNING]
+> **🟡 Strong** — one viral ad campaign can generate 100× normal click volume. In a Kafka cluster partitioned by ad_id, this creates a hot partition
+>
+> [!TIP]
+> **🟢 Staff+** — detection: monitor consumer lag per (topic, partition). When a partition exceeds a lag threshold, detect the hot ad_id causing the spike. Use a compound partition key (ad_id + random_suffix_0_to_N) to spread the load across N partitions. The Flink job handles the merge: KEY BY ad_id across multiple partitions gives correct aggregation regardless of how many partitions the ad's events are spread across. Weak answer: increase partition count. Strong answer: dynamic repartitioning. Monitor partition consumer lag per (topic, partition). When a partition exceeds a lag threshold: detect the hot ad_id causing the spike. Create additional Kafka partitions for that ad_id using a compound key (ad_id + random_suffix). The Flink job handles this: multiple partitions for the same ad_id, Flink aggregates across all partitions in a keyed stream (KEY BY ad_id → Flink handles the merge). The output is correct regardless of how many partitions the ad's events are spread across. At the ClickHouse write side: batching (Flink emits aggregated counts rather than raw events) reduces ClickHouse write amplification. For ClickHouse: ad_id is the partition key for the aggregated table — hot ad_id creates a hot ClickHouse partition. Fix: ReplicatedMergeTree with multiple replicas for hot ad_ids (ClickHouse routes reads to replicas)
+
+
+_Why the deep dives connect to the scaling problem: "Write-heavy analytics pipeline with correctness requirements." Each deep dive addresses one constraint._
 
 </details>
 

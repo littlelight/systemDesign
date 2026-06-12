@@ -224,17 +224,54 @@ The hard part is fan-out: one viral event creates millions of deliveries, but th
 <details>
 <summary><strong>Deep dives</strong></summary>
 
-Deep dive 1: Multi-channel routing and independent scaling
-Weak answer: one worker pool handles all channels. Strong answer: channel-specific workers because rate limits, payload formats, and failure modes differ. APNs uses device tokens and certificate auth; email uses SMTP/API with bounce handling; SMS has per-country regulations. Staff+ detail: partition Kafka by user_id hash for parallelism while keeping per-user ordering within a channel. Critical notifications use a dedicated high-priority topic with reserved worker capacity.
+#### Deep dive 1: Multi-channel routing and independent scaling
+> [!CAUTION]
+> **🔴 Weak** — one worker pool handles all channels
+>
+> [!WARNING]
+> **🟡 Strong** — channel-specific workers because rate limits, payload formats, and failure modes differ. APNs uses device tokens and certificate auth; email uses SMTP/API with bounce handling; SMS has per-country regulations
+>
+> [!TIP]
+> **🟢 Staff+** — partition Kafka by user_id hash for parallelism while keeping per-user ordering within a channel. Critical notifications use a dedicated high-priority topic with reserved worker capacity
 
-Deep dive 2: Deduplication under at-least-once delivery
-Worker crashes after sending but before committing offset → message redelivered → duplicate notification. Redis SETNX on event_id before send. If key exists, skip. TTL = 24h covers replay window. Staff+ level: include idempotency key in provider request (FCM collapse_key) so the provider also deduplicates. Document contract: delivery is at-least-once; consumers must be idempotent.
 
-Deep dive 3: Viral fan-out and provider rate limits
-One event → 10M notifications in 60s. Kafka absorbs the write spike, but APNs/FCM rate-limit per certificate. Stagger enqueue over 60–120s. Monitor provider 429 responses and backoff globally. Batch similar notifications (5 new likes → one grouped push). Staff+ concern: APNs coalesces offline notifications — only latest is delivered. For badge counts, send silent data push that triggers app to fetch true count from API.
+#### Deep dive 2: Deduplication under at-least-once delivery
+_Worker crashes after sending but before committing offset → message redelivered → duplicate notification. Redis SETNX on event_id before send. If key exists, skip. TTL = 24h covers replay window_
 
-Deep dive 4: GDPR and user deletion
-Delete device tokens immediately. Publish user_deleted event. All workers check Redis blocklist before send. Kafka messages for deleted users cannot be erased — skip at dispatch. Document 72h purge SLA for compliance.
+> [!CAUTION]
+> **🔴 Weak** — Retry until delivery succeeds — duplicates are rare.
+>
+> [!WARNING]
+> **🟡 Strong** — Worker crashes after sending but before committing offset → message redelivered → duplicate notification. Redis SETNX on event_id before send. If key exists, skip. TTL = 24h covers replay window
+>
+> [!TIP]
+> **🟢 Staff+** — include idempotency key in provider request (FCM collapse_key) so the provider also deduplicates. Document contract: delivery is at-least-once; consumers must be idempotent
+
+
+#### Deep dive 3: Viral fan-out and provider rate limits
+_One event → 10M notifications in 60s. Kafka absorbs the write spike, but APNs/FCM rate-limit per certificate. Stagger enqueue over 60–120s. Monitor provider 429 responses and backoff globally. Batch similar notifications (5 new likes → one grouped push)_
+
+> [!CAUTION]
+> **🔴 Weak** — Push to every device synchronously from the API handler.
+>
+> [!WARNING]
+> **🟡 Strong** — One event → 10M notifications in 60s. Kafka absorbs the write spike, but APNs/FCM rate-limit per certificate. Stagger enqueue over 60–120s. Monitor provider 429 responses and backoff globally. Batch similar notifications (5 new likes → one grouped push)
+>
+> [!TIP]
+> **🟢 Staff+** — APNs coalesces offline notifications — only latest is delivered. For badge counts, send silent data push that triggers app to fetch true count from API
+
+
+#### Deep dive 4: GDPR and user deletion
+_Delete device tokens immediately. Publish user_deleted event. All workers check Redis blocklist before send. Kafka messages for deleted users cannot be erased — skip at dispatch. Document 72h purge SLA for compliance_
+
+> [!CAUTION]
+> **🔴 Weak** — Delete the user row — async workers will stop eventually.
+>
+> [!WARNING]
+> **🟡 Strong** — Delete device tokens immediately. Publish user_deleted event. All workers check Redis blocklist before send. Kafka messages for deleted users cannot be erased — skip at dispatch. Document 72h purge SLA for compliance
+>
+> [!TIP]
+> **🟢 Staff+** — Name metric + revisit trigger when they push depth.
 
 </details>
 
