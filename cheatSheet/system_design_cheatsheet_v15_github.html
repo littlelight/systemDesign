@@ -149,6 +149,13 @@ body.interview-mode .tab[data-tab="f"],body.interview-mode .tab[data-tab="e"],bo
 .card{background:var(--bg-pri);border-right:.5px solid var(--bdr-ter);border-bottom:.5px solid var(--bdr-ter);display:flex;flex-direction:column;transition:outline .1s}
 .card-flash{outline:2px solid var(--bdr-info);outline-offset:-2px}
 .card.hidden{display:none!important}
+body.system-detail .main > .fw,
+body.system-detail .sec-hdr,
+body.jump-detail .sec-hdr,
+body.jump-detail .grid,
+body.jump-detail .card{display:none!important}
+body.system-list .main > .fw{display:none!important}
+.jump-hidden{display:none!important}
 .chdr{padding:12px 14px;display:flex;justify-content:space-between;align-items:flex-start;gap:8px;border-bottom:.5px solid var(--bdr-ter)}
 .ctitle{font-size:14px;font-weight:500}
 .csub{font-size:11px;color:var(--txt-sec);margin-top:2px}
@@ -8362,7 +8369,7 @@ function clearSearchInputs(){
 function clearSystemDetail(){
   selectedIdx=null;
   selectedJumpEl=null;
-  document.body.classList.remove('system-detail','jump-detail');
+  document.body.classList.remove('system-detail','jump-detail','system-list');
   document.querySelectorAll('.jump-hidden').forEach(el=>el.classList.remove('jump-hidden'));
   document.querySelectorAll('.sb-sys').forEach(a=>a.classList.remove('active'));
 }
@@ -8394,7 +8401,7 @@ function navTo(idx, e, tab){
   selectedIdx=idx;
   selectedJumpEl=null;
   document.body.classList.add('system-detail');
-  document.body.classList.remove('jump-detail');
+  document.body.classList.remove('jump-detail','system-list');
   apply();
   if(tab){
     const btn=card.querySelector('.tab[data-tab="'+tab+'"]');
@@ -8551,13 +8558,17 @@ function sw(btn,id,tab,idx){
 }
 function filt(d,btn){
   clearSystemDetail();
+  document.body.classList.add('system-list');
   af=d;
   // sync sidebar sb-btn buttons
   syncFilterButtons();
   apply();
+  const main=document.querySelector('.main');
+  if(main) main.scrollTo({top:0,behavior:'smooth'});
 }
 function search(v){
   clearSystemDetail();
+  document.body.classList.add('system-list');
   as=v.toLowerCase();
   // sync both search boxes
   const sb=document.getElementById('sb-srch');
